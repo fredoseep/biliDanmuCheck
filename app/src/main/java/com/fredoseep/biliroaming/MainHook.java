@@ -15,6 +15,9 @@ import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.TextView;
 
+import java.lang.reflect.Method;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XC_MethodReplacement;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
@@ -29,31 +33,38 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class MainHook implements IXposedHookLoadPackage {
 
     private static final String packageName = "tv.danmaku.bili";
-    private static final String albumRecycleViewHolderClassName = "PJ0.e";
-    private static final String publishArchiveCollectionFieldName = "a";
-    private static final String albumSelectPageViewClassName = "OH0.X";
-    private static final String RECYCLER_VIEW_FIELD_NAME = "f";
+    private static final boolean IS_DEBUG = true;
 
-    private static final int UNDERPLAYER_CONTAINER_RID = 0x7f095065;
+    private int dynamicTargetViewId = -1;
 
     public static final ConcurrentHashMap<Long, String> GLOBAL_DANMAKU_DICT = new ConcurrentHashMap<>();
-
     public static final ConcurrentHashMap<String, Long> RECENT_MSGS = new ConcurrentHashMap<>();
-
-    private static final boolean IS_DEBUG = false;
     private static final Map<String, Integer> titleIndexMapping = new HashMap<>();
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
         if (!lpparam.packageName.equals(packageName)) return;
-
         try {
-            Class<?> AlbumRecycleViewClass = XposedHelpers.findClass(albumRecycleViewHolderClassName, lpparam.classLoader);
+            System.loadLibrary("dexkit");
+        } catch (Throwable t) {
+            log("加载 DexKit 动态库失败: " + t.getMessage());
+        }
+
+        DexKitHelper helper = new DexKitHelper();
+        helper.resolve(lpparam);
+
+        log("开始执行业务 Hook 逻辑...");
+        executeOriginalHooks(lpparam, helper);
+    }
+
+    private void executeOriginalHooks(XC_LoadPackage.LoadPackageParam lpparam, DexKitHelper helper) {
+        try {
+            Class<?> AlbumRecycleViewClass = XposedHelpers.findClass(helper.albumRecycleViewHolderClassName, lpparam.classLoader);
             XposedHelpers.findAndHookMethod(AlbumRecycleViewClass, "onBindViewHolder", "androidx.recyclerview.widget.RecyclerView$ViewHolder", int.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     super.afterHookedMethod(param);
-                    List<?> publishArchiveCollectionList = (List<?>) XposedHelpers.getObjectField(param.thisObject, publishArchiveCollectionFieldName);
+                    List<?> publishArchiveCollectionList = (List<?>) XposedHelpers.getObjectField(param.thisObject, helper.publishArchiveCollectionFieldName);
                     if (publishArchiveCollectionList != null && !publishArchiveCollectionList.isEmpty()) {
                         int index = 0;
                         for (Object publishArchiveCollection : publishArchiveCollectionList) {
@@ -64,12 +75,13 @@ public class MainHook implements IXposedHookLoadPackage {
                     }
                 }
             });
+            log("Hook onBindViewHolder 成功绑定类: " + helper.albumRecycleViewHolderClassName);
         } catch (Throwable t) {
-            log("❌ error in onBindViewHolder: " + t.toString());
+            log("error in onBindViewHolder: " + t.toString());
         }
 
         try {
-            Class<?> AlbumSelectViewClass = XposedHelpers.findClass(albumSelectPageViewClassName, lpparam.classLoader);
+            Class<?> AlbumSelectViewClass = XposedHelpers.findClass(helper.albumSelectPageViewClassName, lpparam.classLoader);
             XposedHelpers.findAndHookMethod(AlbumSelectViewClass, "inflate", LayoutInflater.class, ViewGroup.class, boolean.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -114,7 +126,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
                             final Object recyclerViewObj;
                             try {
-                                recyclerViewObj = XposedHelpers.getObjectField(popUpView, RECYCLER_VIEW_FIELD_NAME);
+                                recyclerViewObj = XposedHelpers.getObjectField(popUpView, helper.RECYCLER_VIEW_FIELD_NAME);
                             } catch (Throwable t) {
                                 return;
                             }
@@ -148,15 +160,15 @@ public class MainHook implements IXposedHookLoadPackage {
                     oldTitleTextViewParent.addView(searchbar, index);
                 }
             });
+            log("Hook inflate 成功绑定类: " + helper.albumSelectPageViewClassName);
         } catch (Throwable t) {
-            log("❌ error at replace title: " + t.toString());
+            log("error at replace title: " + t.toString());
         }
 
         removeAdUnderPlayer(lpparam);
 
-
         try {
-            Class<?> targetClass = XposedHelpers.findClass("tv.danmaku.biliplayerv2.service.interact.biz.chronos.chronosrpc.a", lpparam.classLoader);
+            Class<?> targetClass = XposedHelpers.findClass(helper.chronosRpcClassName, lpparam.classLoader);
             for (java.lang.reflect.Method method : targetClass.getDeclaredMethods()) {
                 if (method.getName().equals("invoke")) {
                     XposedBridge.hookMethod(method, new XC_MethodHook() {
@@ -174,12 +186,14 @@ public class MainHook implements IXposedHookLoadPackage {
                             }
                         }
                     });
+                    log("Hook ChronosRpc invoke 成功绑定类: " + helper.chronosRpcClassName);
                     break;
                 }
             }
         } catch (Throwable t) {
-            log("❌ error hooking chronosrpc invoke: " + t.toString());
+            log("error hooking chronosrpc invoke: " + t.toString());
         }
+
         hookClipboardToJump(lpparam);
     }
 
@@ -226,9 +240,8 @@ public class MainHook implements IXposedHookLoadPackage {
                             public void run() {
                                 Long targetDmid = RECENT_MSGS.get(copiedText);
                                 if (targetDmid != null) {
-                                    log("🎯 复制内容匹配！准备解析 Hash 并跳转主页...");
+                                    log("复制内容匹配！准备解析 Hash 并跳转主页...");
                                     crackAndJump(String.valueOf(targetDmid));
-
                                     RECENT_MSGS.remove(copiedText);
                                 }
                             }
@@ -247,22 +260,73 @@ public class MainHook implements IXposedHookLoadPackage {
             String hash = GLOBAL_DANMAKU_DICT.get(dmid);
 
             if (hash != null) {
-                String realUid = BiliDanmuCrack.crack(hash);
-                log("破译成功！真实 UID: " + realUid);
-
-                Context context = AndroidAppHelper.currentApplication();
-                if (context != null) {
-                    Intent intent = new Intent(Intent.ACTION_VIEW);
-                    intent.setData(Uri.parse("bilibili://space/" + realUid));
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    context.startActivity(intent);
+                final List<String> candidates = BiliDanmuCrack.crack(hash);
+                if (candidates.isEmpty()) {
+                    log("error: The result is empty");
+                    return;
                 }
+
+                log("获取到候选 UID 集合，启动后台线程校验: " + candidates.toString());
+
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        boolean found = false;
+                        for (String realUid : candidates) {
+                            if (isUIDValidSync(realUid)) {
+                                log("API 校验通过，命中真实 UID: " + realUid);
+                                found = true;
+
+                                Context context = AndroidAppHelper.currentApplication();
+                                if (context != null) {
+                                    Intent intent = new Intent(Intent.ACTION_VIEW);
+                                    intent.setData(Uri.parse("bilibili://space/" + realUid));
+                                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                    context.startActivity(intent);
+                                }
+                                break;
+                            }
+                        }
+
+                        if (!found) {
+                            log("候选 UID 均未通过在线 API 校验，可能是已被销号的用户。");
+                        }
+                    }
+                }).start();
+
             } else {
                 log("字典中未找到该 dmid: " + dmid + " (可能该弹幕不包含在基础历史池中)");
             }
         } catch (Exception e) {
             log("跳转报错: " + e.getMessage());
         }
+    }
+
+    private boolean isUIDValidSync(String UID) {
+        try {
+            String apiUrl = "https://api.bilibili.com/x/space/upstat?mid=" + UID;
+            java.net.URL url = new java.net.URL(apiUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(3000);
+
+            if (conn.getResponseCode() == 200) {
+                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream(), "UTF-8"));
+                StringBuilder jsonResult = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    jsonResult.append(line);
+                }
+                reader.close();
+
+                org.json.JSONObject jsonObject = new org.json.JSONObject(jsonResult.toString());
+                int code = jsonObject.optInt("code", -1);
+                return code == 0;
+            }
+        } catch (Exception e) {
+            log("❌ 网络 API 校验异常: " + e.getMessage());
+        }
+        return false;
     }
 
     private void fetchDanmakuAsync(final String cid) {
@@ -272,8 +336,8 @@ public class MainHook implements IXposedHookLoadPackage {
                 try {
                     String apiUrl = "https://comment.bilibili.com/" + cid + ".xml";
                     log("正在拉取弹幕 XML: " + apiUrl);
-                    java.net.URL url = new java.net.URL(apiUrl);
-                    java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                    URL url = new java.net.URL(apiUrl);
+                    HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
                     conn.setRequestMethod("GET");
                     conn.setRequestProperty("Accept-Encoding", "gzip, deflate");
                     conn.setConnectTimeout(5000);
@@ -326,7 +390,24 @@ public class MainHook implements IXposedHookLoadPackage {
 
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if ((int) param.args[1] == UNDERPLAYER_CONTAINER_RID) {
+                    if (dynamicTargetViewId == -1) {
+                        View rootView = (View) param.args[0];
+                        if (rootView != null && rootView.getContext() != null) {
+                            // 动态获取：传入 控件名、"id"、包名
+                            // 请将 "collection_dialog_title_view" 替换为你实际想要隐藏的广告容器控件名
+                            dynamicTargetViewId = rootView.getContext().getResources().getIdentifier("underplayer_container", "id", packageName);
+
+                            // 容错处理：如果没找到这个控件名，赋值为 0，防止重复触发 getIdentifier 导致卡顿
+                            if (dynamicTargetViewId == 0) {
+                                log("未能动态获取到控件 ID，请检查控件名是否正确");
+                                dynamicTargetViewId = 0;
+                            } else {
+                                log("成功动态绑定控件 ID: " + dynamicTargetViewId);
+                            }
+                        }
+                    }
+
+                    if (dynamicTargetViewId > 0 && (int) param.args[1] == dynamicTargetViewId) {
                         View targetView = (View) param.getResult();
                         if (targetView != null) {
                             ViewGroup.LayoutParams params = targetView.getLayoutParams();
@@ -345,11 +426,37 @@ public class MainHook implements IXposedHookLoadPackage {
                 }
             });
         } catch (Throwable t) {
-            log("error: " + t.toString());
+            log("error removing ad: " + t.toString());
+        }
+
+        try {
+            Class<?> AdPausedPagePanelClass = XposedHelpers.findClass("com.bilibili.ad.adview.videodetail.pausedpage.AdPausedPagePanel", lpparam.classLoader);
+            XposedHelpers.findAndHookMethod(AdPausedPagePanelClass, "onCreateView", ViewGroup.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    Context context = ((ViewGroup)param.args[0]).getContext();
+                    param.setResult(new View(context));
+                }
+            });
+        } catch (Throwable t) {
+            log("error on paused page ad: " + t.toString());
+        }
+
+        try{
+            Class<?> DetailAdServiceClass  = XposedHelpers.findClass("com.bilibili.ship.theseus.ugc.ad.DetailAdService",lpparam.classLoader);
+            for(Method method: DetailAdServiceClass.getDeclaredMethods()){
+                if(method.getName().equals("showPanel")){
+                    log("showPanel Method found");
+                    XposedBridge.hookMethod(method,XC_MethodReplacement.DO_NOTHING);
+                    break;
+                }
+            }
+        }catch (Throwable t){
+            log("error on detail ad: "+t);
         }
     }
 
-    private void log(String msg) {
+    public static void log(String msg) {
         if (IS_DEBUG) {
             XposedBridge.log("bilibili hook: " + msg);
         }

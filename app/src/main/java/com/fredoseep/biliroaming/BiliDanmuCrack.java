@@ -1,5 +1,8 @@
 package com.fredoseep.biliroaming;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class BiliDanmuCrack {
     private static final long CRCPOLYNOMIAL = 0xEDB88320L;
     private static final long[] crctable = new long[256];
@@ -67,13 +70,15 @@ public class BiliDanmuCrack {
         return str.toString();
     }
 
-    public static String crack(String input) {
+    // 核心修改：改为返回 List<String> 局部变量，防止状态污染
+    public static List<String> crack(String input) {
+        List<String> resultList = new ArrayList<>();
         long ht;
         try {
-            // Java 强转并补全异或
             ht = Long.parseLong(input, 16) ^ 0xFFFFFFFFL;
         } catch (Exception e) {
-            return "Unknown";
+            MainHook.log(e.toString());
+            return resultList;
         }
 
         int[] index = new int[4];
@@ -89,7 +94,6 @@ public class BiliDanmuCrack {
             int len = 0;
             int temp = i;
 
-            // 将数字快速转换为 byte 数组 (等效于 String.valueOf(i).getBytes())
             if (temp == 0) {
                 bytes[0] = '0';
                 len = 1;
@@ -111,10 +115,10 @@ public class BiliDanmuCrack {
             if (lastindex == index[3]) {
                 String deepCheckData = deepCheck(bytes, len, index);
                 if (deepCheckData != null) {
-                    return i + deepCheckData; // 完美拼接并返回
+                    resultList.add(i + deepCheckData);
                 }
             }
         }
-        return "Unknown";
+        return resultList;
     }
 }
