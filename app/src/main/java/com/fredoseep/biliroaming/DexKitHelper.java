@@ -33,8 +33,7 @@ public class DexKitHelper {
     public void resolve(XC_LoadPackage.LoadPackageParam lpparam) {
         File apkFile = new File(lpparam.appInfo.sourceDir);
         long currentApkTime = apkFile.lastModified();
-        File cacheFile = new File(lpparam.appInfo.dataDir + "/cache/dexkit_hook_cache.properties");
-
+        File cacheFile = new File(lpparam.appInfo.dataDir, "cache/dexkit_hook_cache.properties");
         Properties cacheProps = new Properties();
         boolean needScan = true;
 

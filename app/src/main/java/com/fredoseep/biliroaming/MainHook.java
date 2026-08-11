@@ -33,7 +33,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class MainHook implements IXposedHookLoadPackage {
 
     private static final String packageName = "tv.danmaku.bili";
-    private static final boolean IS_DEBUG = true;
+    private static final boolean IS_DEBUG = false;
 
     private int dynamicTargetViewId = -1;
 
