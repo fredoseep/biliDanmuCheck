@@ -9,6 +9,8 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.util.AttributeSet;
+import android.view.GestureDetector;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,6 +23,7 @@ import java.net.URL;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -55,7 +58,114 @@ public class MainHook implements IXposedHookLoadPackage {
 
         log("开始执行业务 Hook 逻辑...");
         executeOriginalHooks(lpparam, helper);
+        descCopyFix(lpparam,helper);
     }
+
+    private void descCopyFix(XC_LoadPackage.LoadPackageParam lpparam, DexKitHelper helper) {
+        try {
+            final String TAG = "BiliHook -> ";
+            final WeakHashMap<View, GestureDetector> gestureDetectorMap = new WeakHashMap<>();
+            XposedHelpers.findAndHookConstructor(
+                    helper.DESCRIPTION_TEXTVIEW_CLASS_NAME,
+                    lpparam.classLoader,
+                    Context.class,
+                    AttributeSet.class,
+                    int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            android.widget.TextView tv = (android.widget.TextView) param.thisObject;
+                            tv.setTextIsSelectable(true);
+                            tv.setFocusable(true);
+                            tv.setFocusableInTouchMode(true);
+                            tv.setLongClickable(true);
+                            tv.setMovementMethod(android.text.method.ArrowKeyMovementMethod.getInstance());
+                        }
+                    }
+            );
+
+            XposedHelpers.findAndHookMethod(
+                    helper.DESCRIPTION_TEXTVIEW_CLASS_NAME,
+                    lpparam.classLoader,
+                    "onTouchEvent",
+                    android.view.MotionEvent.class,
+                    new XC_MethodReplacement() {
+                        @Override
+                        protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
+                            final android.widget.TextView tv = (android.widget.TextView) param.thisObject;
+                            android.view.MotionEvent event = (android.view.MotionEvent) param.args[0];
+                            int action = event.getActionMasked();
+                            if (action == android.view.MotionEvent.ACTION_DOWN) {
+                                tv.requestFocus();
+                                if (tv.getParent() != null) {
+                                    tv.getParent().requestDisallowInterceptTouchEvent(true);
+                                }
+                            }
+
+                            Object editorObj = null;
+                            try {
+                                java.lang.reflect.Field editorField = android.widget.TextView.class.getDeclaredField("mEditor");
+                                editorField.setAccessible(true);
+                                editorObj = editorField.get(tv);
+                                if (editorObj != null) {
+                                    java.lang.reflect.Method onTouchMethod = editorObj.getClass().getDeclaredMethod("onTouchEvent", android.view.MotionEvent.class);
+                                    onTouchMethod.setAccessible(true);
+                                    onTouchMethod.invoke(editorObj, event);
+                                }
+                            } catch (Exception ignored) { }
+
+                            final Object finalEditorObj = editorObj;
+
+                            android.view.GestureDetector gd = gestureDetectorMap.get(tv);
+                            if (gd == null) {
+                                gd = new android.view.GestureDetector(tv.getContext(), new android.view.GestureDetector.SimpleOnGestureListener() {
+                                    @Override
+                                    public void onLongPress(android.view.MotionEvent e) {
+                                        boolean result = tv.performLongClick();
+                                        log(TAG + "performLongClick returned: " + result);
+
+                                        if (!result && finalEditorObj != null) {
+                                            try {
+                                                int offset = tv.getOffsetForPosition(e.getX(), e.getY());
+                                                int start = Math.max(0, offset - 2);
+                                                int end = Math.min(tv.getText().length(), offset + 2);
+                                                android.text.Selection.setSelection((android.text.Spannable) tv.getText(), start, end);
+
+                                                java.lang.reflect.Method startActionMode = finalEditorObj.getClass().getDeclaredMethod("startSelectionActionModeAsync", boolean.class);
+                                                startActionMode.setAccessible(true);
+                                                startActionMode.invoke(finalEditorObj, false);
+                                                log(TAG + "Hard launched Selection ActionMode.");
+                                            } catch (Exception ex) {
+                                                log(TAG + "Hard launch failed: " + ex.getMessage());
+                                            }
+                                        }
+                                    }
+
+                                    @Override
+                                    public boolean onSingleTapUp(android.view.MotionEvent e) {
+                                        tv.performClick();
+                                        return true;
+                                    }
+                                });
+                                gd.setIsLongpressEnabled(true);
+                                gestureDetectorMap.put(tv, gd);
+                            }
+
+                            gd.onTouchEvent(event);
+
+                            if (tv.getMovementMethod() != null && tv.getText() instanceof android.text.Spannable) {
+                                tv.getMovementMethod().onTouchEvent(tv, (android.text.Spannable) tv.getText(), event);
+                            }
+
+                            return true;
+                        }
+                    }
+            );
+        } catch (Exception e) {
+            log("BiliHook -> Error: " + e.toString());
+        }
+    }
+
 
     private void executeOriginalHooks(XC_LoadPackage.LoadPackageParam lpparam, DexKitHelper helper) {
         try {
@@ -114,10 +224,12 @@ public class MainHook implements IXposedHookLoadPackage {
 
                     searchbar.addTextChangedListener(new TextWatcher() {
                         @Override
-                        public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {}
+                        public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
+                        }
 
                         @Override
-                        public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {}
+                        public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
+                        }
 
                         @Override
                         public void afterTextChanged(Editable editable) {
@@ -211,14 +323,14 @@ public class MainHook implements IXposedHookLoadPackage {
                     String cid = String.valueOf(argsMap.get("video_id"));
                     log("【动作A】检测到弹幕加载，准备请求 cid: " + cid);
                     fetchDanmakuAsync(cid);
-                }
-                else if (argsMap.containsKey("dmid") && argsMap.containsKey("msg")) {
+                } else if (argsMap.containsKey("dmid") && argsMap.containsKey("msg")) {
                     String dmidStr = String.valueOf(argsMap.get("dmid"));
                     String msg = String.valueOf(argsMap.get("msg"));
                     try {
                         RECENT_MSGS.put(msg, Long.parseLong(dmidStr));
                         log("【状态记录】存入近期点击记录: " + msg + " -> " + dmidStr);
-                    } catch (Exception e) {}
+                    } catch (Exception e) {
+                    }
                 }
             }
         } catch (Exception e) {
@@ -371,7 +483,8 @@ public class MainHook implements IXposedHookLoadPackage {
                                     long dmid = Long.parseLong(parts[7]);
                                     GLOBAL_DANMAKU_DICT.put(dmid, parts[6]);
                                     count++;
-                                } catch (Exception ignored) {}
+                                } catch (Exception ignored) {
+                                }
                             }
                         }
                         log("✅ 【建账完毕】成功解压并缓存 " + count + " 条弹幕！");
@@ -434,7 +547,7 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(AdPausedPagePanelClass, "onCreateView", ViewGroup.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    Context context = ((ViewGroup)param.args[0]).getContext();
+                    Context context = ((ViewGroup) param.args[0]).getContext();
                     param.setResult(new View(context));
                 }
             });
@@ -442,17 +555,17 @@ public class MainHook implements IXposedHookLoadPackage {
             log("error on paused page ad: " + t.toString());
         }
 
-        try{
-            Class<?> DetailAdServiceClass  = XposedHelpers.findClass("com.bilibili.ship.theseus.ugc.ad.DetailAdService",lpparam.classLoader);
-            for(Method method: DetailAdServiceClass.getDeclaredMethods()){
-                if(method.getName().equals("showPanel")){
+        try {
+            Class<?> DetailAdServiceClass = XposedHelpers.findClass("com.bilibili.ship.theseus.ugc.ad.DetailAdService", lpparam.classLoader);
+            for (Method method : DetailAdServiceClass.getDeclaredMethods()) {
+                if (method.getName().equals("showPanel")) {
                     log("showPanel Method found");
-                    XposedBridge.hookMethod(method,XC_MethodReplacement.DO_NOTHING);
+                    XposedBridge.hookMethod(method, XC_MethodReplacement.DO_NOTHING);
                     break;
                 }
             }
-        }catch (Throwable t){
-            log("error on detail ad: "+t);
+        } catch (Throwable t) {
+            log("error on detail ad: " + t);
         }
     }
 

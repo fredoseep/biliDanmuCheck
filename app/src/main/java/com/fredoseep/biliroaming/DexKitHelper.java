@@ -1,5 +1,7 @@
 package com.fredoseep.biliroaming;
 
+import android.util.Log;
+
 import org.luckypray.dexkit.DexKitBridge;
 import org.luckypray.dexkit.query.FindClass;
 import org.luckypray.dexkit.query.FindField;
@@ -26,6 +28,10 @@ public class DexKitHelper {
     public String albumSelectPageViewClassName = "OH0.X";
     public String RECYCLER_VIEW_FIELD_NAME = "f";
     public String chronosRpcClassName = "tv.danmaku.biliplayerv2.service.interact.biz.chronos.chronosrpc.a";
+
+    public String DESCRIPTION_TEXTVIEW_CLASS_NAME = "Ym1.a";
+
+    public final boolean IS_TESTING = false;
 
     /**
      * 解析并加载混淆变量。如果缓存有效则直接加载，否则启动 DexKit 扫描。
@@ -56,7 +62,7 @@ public class DexKitHelper {
             }
         }
 
-        if (needScan) {
+        if (needScan||IS_TESTING) {
             MainHook.log(" B站版本更新或首次运行，启动 DexKit 深度扫描...");
             try (DexKitBridge bridge = DexKitBridge.create(lpparam.appInfo.sourceDir)) {
                 if (bridge == null) {
@@ -119,12 +125,22 @@ public class DexKitHelper {
                     MainHook.log("找到 ChronosRpc: " + chronosRpcClassName);
                 }
 
+                List<ClassData> descriptionTextViewClassDataList = bridge.findClass(FindClass.create()
+                        .matcher(ClassMatcher.create().usingStrings(
+                                "UgcIntroductionComponent",
+                                "onLongClick DescTagSpan"
+                        ))
+                );
+                if(descriptionTextViewClassDataList.isEmpty()) MainHook.log("DexKit fail to find descriptionTextViewClass");
+               else DESCRIPTION_TEXTVIEW_CLASS_NAME = getOuterClass(bridge,descriptionTextViewClassDataList.get(0)).getName();
+
                 cacheProps.setProperty("apk_last_modified", String.valueOf(currentApkTime));
                 cacheProps.setProperty("albumRecycleViewHolderClassName", albumRecycleViewHolderClassName);
                 cacheProps.setProperty("publishArchiveCollectionFieldName", publishArchiveCollectionFieldName);
                 cacheProps.setProperty("albumSelectPageViewClassName", albumSelectPageViewClassName);
                 cacheProps.setProperty("RECYCLER_VIEW_FIELD_NAME", RECYCLER_VIEW_FIELD_NAME);
                 cacheProps.setProperty("chronosRpcClassName", chronosRpcClassName);
+                cacheProps.setProperty("DESCRIPTION_TEXTVIEW_CLASS_NAME",DESCRIPTION_TEXTVIEW_CLASS_NAME);
 
                 cacheFile.getParentFile().mkdirs();
                 try (FileOutputStream fos = new FileOutputStream(cacheFile)) {
@@ -135,5 +151,15 @@ public class DexKitHelper {
                 MainHook.log("❌ DexKit 扫描过程发生异常: " + e.getMessage());
             }
         }
+    }
+
+    public ClassData getOuterClass(DexKitBridge bridge, ClassData innerClassData) {
+        String innerClassName = innerClassData.getName();
+        int dollarIndex = innerClassName.indexOf('$');
+        if (dollarIndex == -1) {
+            return null;
+        }
+        String outerClassName = innerClassName.substring(0, dollarIndex);
+        return bridge.getClassData(outerClassName);
     }
 }
