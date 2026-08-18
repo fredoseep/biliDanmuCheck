@@ -40,6 +40,7 @@ public class DexKitHelper {
         File apkFile = new File(lpparam.appInfo.sourceDir);
         long currentApkTime = apkFile.lastModified();
         File cacheFile = new File(lpparam.appInfo.dataDir, "cache/dexkit_hook_cache.properties");
+        MainHook.log("cache file directory: "+cacheFile.getPath().toString());
         Properties cacheProps = new Properties();
         boolean needScan = true;
 
@@ -55,6 +56,7 @@ public class DexKitHelper {
                     albumSelectPageViewClassName = cacheProps.getProperty("albumSelectPageViewClassName", albumSelectPageViewClassName);
                     RECYCLER_VIEW_FIELD_NAME = cacheProps.getProperty("RECYCLER_VIEW_FIELD_NAME", RECYCLER_VIEW_FIELD_NAME);
                     chronosRpcClassName = cacheProps.getProperty("chronosRpcClassName", chronosRpcClassName);
+                    DESCRIPTION_TEXTVIEW_CLASS_NAME = cacheProps.getProperty("DESCRIPTION_TEXTVIEW_CLASS_NAME", DESCRIPTION_TEXTVIEW_CLASS_NAME);
                     needScan = false;
                 }
             } catch (Exception e) {
