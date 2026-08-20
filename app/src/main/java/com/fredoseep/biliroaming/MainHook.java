@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.GestureDetector;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -35,8 +36,11 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class MainHook implements IXposedHookLoadPackage {
 
-    private static final String packageName = "tv.danmaku.bili";
+    private static final String PACKAGE_NAME = "tv.danmaku.bili";
+    private static final String INTERNATIONAL_PACKAGE_NAME = "com.bilibili.app.in";
     private static final boolean IS_DEBUG = false;
+
+    public static boolean isInternational = false;
 
     private int dynamicTargetViewId = -1;
 
@@ -46,7 +50,10 @@ public class MainHook implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        if (!lpparam.packageName.equals(packageName)) return;
+        if (!lpparam.packageName.equals(PACKAGE_NAME) && !lpparam.packageName.equals(INTERNATIONAL_PACKAGE_NAME))
+            return;
+        if (lpparam.packageName.equals(INTERNATIONAL_PACKAGE_NAME)) isInternational = true;
+
         try {
             System.loadLibrary("dexkit");
         } catch (Throwable t) {
@@ -58,7 +65,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
         log("开始执行业务 Hook 逻辑...");
         executeOriginalHooks(lpparam, helper);
-        descCopyFix(lpparam,helper);
+        descCopyFix(lpparam, helper);
     }
 
     private void descCopyFix(XC_LoadPackage.LoadPackageParam lpparam, DexKitHelper helper) {
@@ -112,7 +119,8 @@ public class MainHook implements IXposedHookLoadPackage {
                                     onTouchMethod.setAccessible(true);
                                     onTouchMethod.invoke(editorObj, event);
                                 }
-                            } catch (Exception ignored) { }
+                            } catch (Exception ignored) {
+                            }
 
                             final Object finalEditorObj = editorObj;
 
@@ -168,145 +176,71 @@ public class MainHook implements IXposedHookLoadPackage {
 
 
     private void executeOriginalHooks(XC_LoadPackage.LoadPackageParam lpparam, DexKitHelper helper) {
-        try {
-            Class<?> AlbumRecycleViewClass = XposedHelpers.findClass(helper.albumRecycleViewHolderClassName, lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(AlbumRecycleViewClass, "onBindViewHolder", "androidx.recyclerview.widget.RecyclerView$ViewHolder", int.class, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    super.afterHookedMethod(param);
-                    List<?> publishArchiveCollectionList = (List<?>) XposedHelpers.getObjectField(param.thisObject, helper.publishArchiveCollectionFieldName);
-                    if (publishArchiveCollectionList != null && !publishArchiveCollectionList.isEmpty()) {
-                        int index = 0;
-                        for (Object publishArchiveCollection : publishArchiveCollectionList) {
-                            String currentTitle = XposedHelpers.callMethod(publishArchiveCollection, "getTitle").toString().toLowerCase();
-                            titleIndexMapping.put(currentTitle, index);
-                            index++;
-                        }
-                    }
-                }
-            });
-            log("Hook onBindViewHolder 成功绑定类: " + helper.albumRecycleViewHolderClassName);
-        } catch (Throwable t) {
-            log("error in onBindViewHolder: " + t.toString());
-        }
+        if (isInternational) {
+            try {
+                Class<?> function6Class = XposedHelpers.findClass("kotlin.jvm.functions.Function6", lpparam.classLoader);
+                Class<?> oClass = XposedHelpers.findClass(helper.INTERNATIONAL_CHRONOS_RPC_CLASS_NAME, lpparam.classLoader);
 
-        try {
-            Class<?> AlbumSelectViewClass = XposedHelpers.findClass(helper.albumSelectPageViewClassName, lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(AlbumSelectViewClass, "inflate", LayoutInflater.class, ViewGroup.class, boolean.class, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    super.afterHookedMethod(param);
-                    final Object popUpView = param.getResult();
-                    if (popUpView == null) return;
+                XposedHelpers.findAndHookMethod(oClass, helper.INTERNATIONAL_INVOKE_METHOD_NAME, Class.class, function6Class, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        Class<?> payloadClass = (Class<?>) param.args[0];
+                        Object handlerImpl = param.args[1];
 
-                    final ViewGroup originalViewGroup = (ViewGroup) XposedHelpers.callMethod(popUpView, "getRoot");
-                    final Context context = originalViewGroup.getContext();
+                        if (payloadClass != null && handlerImpl != null) {
+                            String className = payloadClass.getName();
+                            if (className.endsWith("EventReport$Request")) {
 
-                    int oldTitleTextViewId = context.getResources().getIdentifier("collection_dialog_title_view", "id", packageName);
-                    View oldTitleTextView = originalViewGroup.findViewById(oldTitleTextViewId);
-
-                    if (oldTitleTextView == null) return;
-
-                    ColorStateList originalColor = ((TextView) oldTitleTextView).getTextColors();
-                    ViewGroup oldTitleTextViewParent = (ViewGroup) oldTitleTextView.getParent();
-                    int index = oldTitleTextViewParent.indexOfChild(oldTitleTextView);
-                    ViewGroup.LayoutParams params = oldTitleTextView.getLayoutParams();
-
-                    oldTitleTextViewParent.removeView(oldTitleTextView);
-
-                    final EditText searchbar = new EditText(context);
-                    searchbar.setHint("搜索合集...");
-                    searchbar.setHintTextColor(Color.GRAY);
-                    searchbar.setTextColor(originalColor);
-                    searchbar.setLayoutParams(params);
-                    searchbar.setId(oldTitleTextViewId);
-                    searchbar.setBackgroundColor(Color.TRANSPARENT);
-
-                    searchbar.addTextChangedListener(new TextWatcher() {
-                        @Override
-                        public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-                        }
-
-                        @Override
-                        public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
-                        }
-
-                        @Override
-                        public void afterTextChanged(Editable editable) {
-                            String input = editable.toString().toLowerCase().trim();
-                            if (input.isEmpty() || titleIndexMapping.isEmpty()) return;
-
-                            final Object recyclerViewObj;
-                            try {
-                                recyclerViewObj = XposedHelpers.getObjectField(popUpView, helper.RECYCLER_VIEW_FIELD_NAME);
-                            } catch (Throwable t) {
-                                return;
-                            }
-
-                            if (recyclerViewObj == null) return;
-
-                            int targetIndex = -1;
-                            for (Map.Entry<String, Integer> entry : titleIndexMapping.entrySet()) {
-                                if (entry.getKey().contains(input)) {
-                                    targetIndex = entry.getValue();
-                                    break;
-                                }
-                            }
-
-                            if (targetIndex != -1) {
-                                final int finalTargetIndex = targetIndex;
-                                searchbar.post(new Runnable() {
+                                XposedBridge.hookAllMethods(handlerImpl.getClass(), "invoke", new XC_MethodHook() {
                                     @Override
-                                    public void run() {
-                                        try {
-                                            XposedHelpers.callMethod(recyclerViewObj, "scrollToPosition", finalTargetIndex);
-                                        } catch (Throwable t) {
-                                            log("❌ 滚动时发生异常: " + t.toString());
+                                    protected void beforeHookedMethod(MethodHookParam invokeParam) throws Throwable {
+                                        if (invokeParam.args != null && invokeParam.args.length >= 3) {
+                                            Object payload = invokeParam.args[2];
+                                            if (payload != null) {
+                                                parseEventReport(payload);
+                                            }
                                         }
                                     }
                                 });
                             }
                         }
-                    });
-
-                    oldTitleTextViewParent.addView(searchbar, index);
-                }
-            });
-            log("Hook inflate 成功绑定类: " + helper.albumSelectPageViewClassName);
-        } catch (Throwable t) {
-            log("error at replace title: " + t.toString());
-        }
-
-        removeAdUnderPlayer(lpparam);
-
-        try {
-            Class<?> targetClass = XposedHelpers.findClass(helper.chronosRpcClassName, lpparam.classLoader);
-            for (java.lang.reflect.Method method : targetClass.getDeclaredMethods()) {
-                if (method.getName().equals("invoke")) {
-                    XposedBridge.hookMethod(method, new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            if (param.args == null || param.args.length < 3) return;
-
-                            Object payload = param.args[2];
-                            if (payload == null) return;
-
-                            String className = payload.getClass().getName();
-
-                            if (className.endsWith("EventReport$Request")) {
-                                parseEventReport(payload);
-                            }
-                        }
-                    });
-                    log("Hook ChronosRpc invoke 成功绑定类: " + helper.chronosRpcClassName);
-                    break;
-                }
+                    }
+                });
+            } catch (Throwable t) {
+                log("bilibili.in fails to pin: " + t.toString());
             }
-        } catch (Throwable t) {
-            log("error hooking chronosrpc invoke: " + t.toString());
-        }
+        } else {
+            removeAdUnderPlayer(lpparam);
 
+            try {
+                Class<?> targetClass = XposedHelpers.findClass(helper.CHRONOS_RPC_CLASS_NAME, lpparam.classLoader);
+                for (java.lang.reflect.Method method : targetClass.getDeclaredMethods()) {
+                    if (method.getName().equals("invoke")) {
+                        XposedBridge.hookMethod(method, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                                if (param.args == null || param.args.length < 3) return;
+
+                                Object payload = param.args[2];
+                                if (payload == null) return;
+
+                                String className = payload.getClass().getName();
+
+                                if (className.endsWith("EventReport$Request")) {
+                                    parseEventReport(payload);
+                                }
+                            }
+                        });
+                        log("Hook ChronosRpc invoke 成功绑定类: " + helper.CHRONOS_RPC_CLASS_NAME);
+                        break;
+                    }
+                }
+            } catch (Throwable t) {
+                log("error hooking chronosrpc invoke: " + t.toString());
+            }
+        }
         hookClipboardToJump(lpparam);
+
     }
 
     private void parseEventReport(Object payload) {
@@ -346,6 +280,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     if (clipData != null && clipData.getItemCount() > 0) {
                         final String copiedText = clipData.getItemAt(0).getText().toString();
                         log("【剪贴板】检测到复制动作，内容: " + copiedText);
+                        log("clipboardSetting stack Trace: " + Log.getStackTraceString(new Throwable()));
 
                         new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {
                             @Override
@@ -508,7 +443,7 @@ public class MainHook implements IXposedHookLoadPackage {
                         if (rootView != null && rootView.getContext() != null) {
                             // 动态获取：传入 控件名、"id"、包名
                             // 请将 "collection_dialog_title_view" 替换为你实际想要隐藏的广告容器控件名
-                            dynamicTargetViewId = rootView.getContext().getResources().getIdentifier("underplayer_container", "id", packageName);
+                            dynamicTargetViewId = rootView.getContext().getResources().getIdentifier("underplayer_container", "id", PACKAGE_NAME);
 
                             // 容错处理：如果没找到这个控件名，赋值为 0，防止重复触发 getIdentifier 导致卡顿
                             if (dynamicTargetViewId == 0) {

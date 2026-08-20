@@ -16,6 +16,7 @@ import org.luckypray.dexkit.result.MethodData;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
 
@@ -27,7 +28,11 @@ public class DexKitHelper {
     public String publishArchiveCollectionFieldName = "a";
     public String albumSelectPageViewClassName = "OH0.X";
     public String RECYCLER_VIEW_FIELD_NAME = "f";
-    public String chronosRpcClassName = "tv.danmaku.biliplayerv2.service.interact.biz.chronos.chronosrpc.a";
+    public String CHRONOS_RPC_CLASS_NAME = "tv.danmaku.biliplayerv2.service.interact.biz.chronos.chronosrpc.a";
+
+    public String INTERNATIONAL_CHRONOS_RPC_CLASS_NAME = "com.bilibili.common.chronoscommon.o";
+
+    public String INTERNATIONAL_INVOKE_METHOD_NAME = "f";
 
     public String DESCRIPTION_TEXTVIEW_CLASS_NAME = "Ym1.a";
 
@@ -55,8 +60,11 @@ public class DexKitHelper {
                     publishArchiveCollectionFieldName = cacheProps.getProperty("publishArchiveCollectionFieldName", publishArchiveCollectionFieldName);
                     albumSelectPageViewClassName = cacheProps.getProperty("albumSelectPageViewClassName", albumSelectPageViewClassName);
                     RECYCLER_VIEW_FIELD_NAME = cacheProps.getProperty("RECYCLER_VIEW_FIELD_NAME", RECYCLER_VIEW_FIELD_NAME);
-                    chronosRpcClassName = cacheProps.getProperty("chronosRpcClassName", chronosRpcClassName);
+                    CHRONOS_RPC_CLASS_NAME = cacheProps.getProperty("chronosRpcClassName", CHRONOS_RPC_CLASS_NAME);
                     DESCRIPTION_TEXTVIEW_CLASS_NAME = cacheProps.getProperty("DESCRIPTION_TEXTVIEW_CLASS_NAME", DESCRIPTION_TEXTVIEW_CLASS_NAME);
+                    INTERNATIONAL_CHRONOS_RPC_CLASS_NAME = cacheProps.getProperty("INTERNATIONAL_CHRONOS_RPC_CLASS_NAME", INTERNATIONAL_CHRONOS_RPC_CLASS_NAME);
+                    INTERNATIONAL_INVOKE_METHOD_NAME = cacheProps.getProperty("INTERNATIONAL_INVOKE_METHOD_NAME", INTERNATIONAL_INVOKE_METHOD_NAME);
+
                     needScan = false;
                 }
             } catch (Exception e) {
@@ -123,8 +131,8 @@ public class DexKitHelper {
 
                 List<MethodData> result3 = bridge.findMethod(FindMethod.create().matcher(matcher3));
                 if (!result3.isEmpty()) {
-                    chronosRpcClassName = result3.get(0).getClassName();
-                    MainHook.log("找到 ChronosRpc: " + chronosRpcClassName);
+                    CHRONOS_RPC_CLASS_NAME = result3.get(0).getClassName();
+                    MainHook.log("找到 ChronosRpc: " + CHRONOS_RPC_CLASS_NAME);
                 }
 
                 List<ClassData> descriptionTextViewClassDataList = bridge.findClass(FindClass.create()
@@ -136,13 +144,43 @@ public class DexKitHelper {
                 if(descriptionTextViewClassDataList.isEmpty()) MainHook.log("DexKit fail to find descriptionTextViewClass");
                else DESCRIPTION_TEXTVIEW_CLASS_NAME = getOuterClass(bridge,descriptionTextViewClassDataList.get(0)).getName();
 
+                List<ClassData> internationalChronosRPCClassDataList = bridge.findClass(FindClass.create()
+                        .matcher(ClassMatcher.create().usingStrings(
+                                "EnhancedChronosPackageRunner",
+                                "DestroyInputSurface: chronos engine is invalid!"
+                        ))
+                );
+
+                if(descriptionTextViewClassDataList.isEmpty()) MainHook.log("DexKit fail to find internationalChronosRPCClass");
+                else {
+                    ClassData internationalChronosRPCClassData = getOuterClass(bridge,internationalChronosRPCClassDataList.get(0));
+                    INTERNATIONAL_CHRONOS_RPC_CLASS_NAME = internationalChronosRPCClassData.getName();
+                    List<MethodData> internationalInvokeMethodDataList = bridge.findMethod(FindMethod.create()
+                            .searchInClass(Collections.singleton(internationalChronosRPCClassData))
+                            .matcher(MethodMatcher.create()
+                                    .paramCount(2)
+                                    .returnType("void")
+                                    .paramTypes("java.lang.Class", "kotlin.jvm.functions.Function6")
+                            )
+                    );
+                    if(internationalInvokeMethodDataList.isEmpty()) MainHook.log("DexKit fail to find internationalInvokeMethod");
+                    else INTERNATIONAL_INVOKE_METHOD_NAME = internationalInvokeMethodDataList.get(0).getName();
+
+                }
+
+
+
                 cacheProps.setProperty("apk_last_modified", String.valueOf(currentApkTime));
                 cacheProps.setProperty("albumRecycleViewHolderClassName", albumRecycleViewHolderClassName);
                 cacheProps.setProperty("publishArchiveCollectionFieldName", publishArchiveCollectionFieldName);
                 cacheProps.setProperty("albumSelectPageViewClassName", albumSelectPageViewClassName);
                 cacheProps.setProperty("RECYCLER_VIEW_FIELD_NAME", RECYCLER_VIEW_FIELD_NAME);
-                cacheProps.setProperty("chronosRpcClassName", chronosRpcClassName);
+                cacheProps.setProperty("CHRONOS_RPC_CLASS_NAME", CHRONOS_RPC_CLASS_NAME);
                 cacheProps.setProperty("DESCRIPTION_TEXTVIEW_CLASS_NAME",DESCRIPTION_TEXTVIEW_CLASS_NAME);
+                cacheProps.setProperty("INTERNATIONAL_CHRONOS_RPC_CLASS_NAME",INTERNATIONAL_CHRONOS_RPC_CLASS_NAME);
+                cacheProps.setProperty("INTERNATIONAL_INVOKE_METHOD_NAME",INTERNATIONAL_INVOKE_METHOD_NAME);
+
+
 
                 cacheFile.getParentFile().mkdirs();
                 try (FileOutputStream fos = new FileOutputStream(cacheFile)) {
@@ -163,5 +201,21 @@ public class DexKitHelper {
         }
         String outerClassName = innerClassName.substring(0, dollarIndex);
         return bridge.getClassData(outerClassName);
+    }
+    private static void listDataPrint(List<?> dataList) {
+        if (dataList.isEmpty()) {
+            MainHook.log("error: class data list is empty");
+            return;
+        }
+        MainHook.log("found " + dataList.size() + " class");
+        for (Object data : dataList) {
+            if (data instanceof ClassData) {
+                MainHook.log("found class name: " + ((ClassData) data).getName() + " ");
+            } else if (data instanceof MethodData) {
+                MainHook.log("found method name: " + ((MethodData) data).getName() + " ");
+            } else if (data instanceof FieldData) {
+                MainHook.log("found field name: " + ((FieldData) data).getName() + " ");
+            }
+        }
     }
 }
