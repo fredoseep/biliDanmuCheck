@@ -35,6 +35,7 @@ public class DexKitHelper {
     public String INTERNATIONAL_INVOKE_METHOD_NAME = "f";
 
     public String DESCRIPTION_TEXTVIEW_CLASS_NAME = "Ym1.a";
+    public String PEGASUS_MODEL_CLASS_NAME = "U9.h";
 
     public final boolean IS_TESTING = false;
 
@@ -64,6 +65,7 @@ public class DexKitHelper {
                     DESCRIPTION_TEXTVIEW_CLASS_NAME = cacheProps.getProperty("DESCRIPTION_TEXTVIEW_CLASS_NAME", DESCRIPTION_TEXTVIEW_CLASS_NAME);
                     INTERNATIONAL_CHRONOS_RPC_CLASS_NAME = cacheProps.getProperty("INTERNATIONAL_CHRONOS_RPC_CLASS_NAME", INTERNATIONAL_CHRONOS_RPC_CLASS_NAME);
                     INTERNATIONAL_INVOKE_METHOD_NAME = cacheProps.getProperty("INTERNATIONAL_INVOKE_METHOD_NAME", INTERNATIONAL_INVOKE_METHOD_NAME);
+                    PEGASUS_MODEL_CLASS_NAME = cacheProps.getProperty("PEGASUS_MODEL_CLASS_NAME", PEGASUS_MODEL_CLASS_NAME);
 
                     needScan = false;
                 }
@@ -141,8 +143,16 @@ public class DexKitHelper {
                                 "onLongClick DescTagSpan"
                         ))
                 );
-                if(descriptionTextViewClassDataList.isEmpty()) MainHook.log("DexKit fail to find descriptionTextViewClass");
-               else DESCRIPTION_TEXTVIEW_CLASS_NAME = getOuterClass(bridge,descriptionTextViewClassDataList.get(0)).getName();
+                if (descriptionTextViewClassDataList.isEmpty()) {
+                    MainHook.log("DexKit fail to find descriptionTextViewClass");
+                } else {
+                    ClassData outerClass = getOuterClass(bridge, descriptionTextViewClassDataList.get(0));
+                    if (outerClass != null) {
+                        DESCRIPTION_TEXTVIEW_CLASS_NAME = outerClass.getName();
+                    } else {
+                        DESCRIPTION_TEXTVIEW_CLASS_NAME = descriptionTextViewClassDataList.get(0).getName();
+                    }
+                }
 
                 List<ClassData> internationalChronosRPCClassDataList = bridge.findClass(FindClass.create()
                         .matcher(ClassMatcher.create().usingStrings(
@@ -151,24 +161,47 @@ public class DexKitHelper {
                         ))
                 );
 
-                if(descriptionTextViewClassDataList.isEmpty()) MainHook.log("DexKit fail to find internationalChronosRPCClass");
-                else {
-                    ClassData internationalChronosRPCClassData = getOuterClass(bridge,internationalChronosRPCClassDataList.get(0));
-                    INTERNATIONAL_CHRONOS_RPC_CLASS_NAME = internationalChronosRPCClassData.getName();
-                    List<MethodData> internationalInvokeMethodDataList = bridge.findMethod(FindMethod.create()
-                            .searchInClass(Collections.singleton(internationalChronosRPCClassData))
-                            .matcher(MethodMatcher.create()
-                                    .paramCount(2)
-                                    .returnType("void")
-                                    .paramTypes("java.lang.Class", "kotlin.jvm.functions.Function6")
-                            )
-                    );
-                    if(internationalInvokeMethodDataList.isEmpty()) MainHook.log("DexKit fail to find internationalInvokeMethod");
-                    else INTERNATIONAL_INVOKE_METHOD_NAME = internationalInvokeMethodDataList.get(0).getName();
+                if (internationalChronosRPCClassDataList.isEmpty()) {
+                    MainHook.log("DexKit fail to find internationalChronosRPCClass");
+                } else {
+                    ClassData internationalChronosRPCClassData = getOuterClass(bridge, internationalChronosRPCClassDataList.get(0));
+
+                    if (internationalChronosRPCClassData != null) {
+                        INTERNATIONAL_CHRONOS_RPC_CLASS_NAME = internationalChronosRPCClassData.getName();
+
+                        List<MethodData> internationalInvokeMethodDataList = bridge.findMethod(FindMethod.create()
+                                .searchInClass(Collections.singleton(internationalChronosRPCClassData))
+                                .matcher(MethodMatcher.create()
+                                        .paramCount(2)
+                                        .returnType("void")
+                                        .paramTypes("java.lang.Class", "kotlin.jvm.functions.Function6")
+                                )
+                        );
+                        if (internationalInvokeMethodDataList.isEmpty()) {
+                            MainHook.log("DexKit fail to find internationalInvokeMethod");
+                        } else {
+                            INTERNATIONAL_INVOKE_METHOD_NAME = internationalInvokeMethodDataList.get(0).getName();
+                        }
+                    } else {
+                        MainHook.log("Warning: internationalChronosRPCClassData 的外部类未找到 (可能已不再是内部类)");
+                    }
+
 
                 }
 
+                ClassMatcher pegasusMatcher = ClassMatcher.create()
+                        .addInterface(ClassMatcher.create().className("com.bilibili.pegasus.data.base.BasePegasusPlayerData"))
+                        .addField(FieldMatcher.create().type("com.bilibili.adcommon.data.AdInfo"))
+                        .addField(FieldMatcher.create().type("com.bilibili.pegasus.HolderExtra"))
+                        .addField(FieldMatcher.create().type("com.bilibili.ad.adview.pegasus.data.AdMode"));
 
+                List<ClassData> pegasusResult = bridge.findClass(FindClass.create().matcher(pegasusMatcher));
+
+               if (!pegasusResult.isEmpty()) {
+                    PEGASUS_MODEL_CLASS_NAME = pegasusResult.get(0).getName();
+                } else {
+                    MainHook.log("❌ 未匹配到推荐流模型类，退回使用硬编码默认值: " + PEGASUS_MODEL_CLASS_NAME);
+                }
 
                 cacheProps.setProperty("apk_last_modified", String.valueOf(currentApkTime));
                 cacheProps.setProperty("albumRecycleViewHolderClassName", albumRecycleViewHolderClassName);
@@ -179,7 +212,7 @@ public class DexKitHelper {
                 cacheProps.setProperty("DESCRIPTION_TEXTVIEW_CLASS_NAME",DESCRIPTION_TEXTVIEW_CLASS_NAME);
                 cacheProps.setProperty("INTERNATIONAL_CHRONOS_RPC_CLASS_NAME",INTERNATIONAL_CHRONOS_RPC_CLASS_NAME);
                 cacheProps.setProperty("INTERNATIONAL_INVOKE_METHOD_NAME",INTERNATIONAL_INVOKE_METHOD_NAME);
-
+                cacheProps.setProperty("PEGASUS_MODEL_CLASS_NAME", PEGASUS_MODEL_CLASS_NAME);
 
 
                 cacheFile.getParentFile().mkdirs();

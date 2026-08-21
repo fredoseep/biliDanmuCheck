@@ -4,24 +4,20 @@ import android.app.AndroidAppHelper;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
-import android.content.res.ColorStateList;
-import android.graphics.Color;
 import android.net.Uri;
-import android.text.Editable;
-import android.text.TextWatcher;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.GestureDetector;
-import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.EditText;
-import android.widget.TextView;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -176,6 +172,8 @@ public class MainHook implements IXposedHookLoadPackage {
 
 
     private void executeOriginalHooks(XC_LoadPackage.LoadPackageParam lpparam, DexKitHelper helper) {
+
+
         if (isInternational) {
             try {
                 Class<?> function6Class = XposedHelpers.findClass("kotlin.jvm.functions.Function6", lpparam.classLoader);
@@ -211,6 +209,7 @@ public class MainHook implements IXposedHookLoadPackage {
             }
         } else {
             removeAdUnderPlayer(lpparam);
+            BiliGsonLobotomy.hookPegasusAd(lpparam.classLoader, helper.PEGASUS_MODEL_CLASS_NAME);
 
             try {
                 Class<?> targetClass = XposedHelpers.findClass(helper.CHRONOS_RPC_CLASS_NAME, lpparam.classLoader);
