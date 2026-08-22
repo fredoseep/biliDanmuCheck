@@ -4,6 +4,7 @@ import android.app.AndroidAppHelper;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.net.Uri;
 import android.util.AttributeSet;
 import android.util.Log;
@@ -13,11 +14,9 @@ import android.view.ViewGroup;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Type;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -42,6 +41,8 @@ public class MainHook implements IXposedHookLoadPackage {
 
     public static final ConcurrentHashMap<Long, String> GLOBAL_DANMAKU_DICT = new ConcurrentHashMap<>();
     public static final ConcurrentHashMap<String, Long> RECENT_MSGS = new ConcurrentHashMap<>();
+
+    private static String LAST_FETCHED_CID = "";
     private static final Map<String, Integer> titleIndexMapping = new HashMap<>();
 
     @Override
@@ -61,7 +62,34 @@ public class MainHook implements IXposedHookLoadPackage {
 
         log("开始执行业务 Hook 逻辑...");
         executeOriginalHooks(lpparam, helper);
-        descCopyFix(lpparam, helper);
+
+        // ---- 新增：版本号检测逻辑 ----
+        boolean shouldRunDescCopyFix = true;
+        try {
+            Object activityThread = XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("android.app.ActivityThread", null),
+                    "currentActivityThread"
+            );
+            if (activityThread != null) {
+                Context systemContext = (Context) XposedHelpers.callMethod(activityThread, "getSystemContext");
+                PackageInfo packageInfo = systemContext.getPackageManager().getPackageInfo(lpparam.packageName, 0);
+                int versionCode = packageInfo.versionCode;
+
+                log("检测到宿主版本号: " + versionCode);
+
+                if (versionCode <= 8090300) {
+                    shouldRunDescCopyFix = false;
+                }
+            }
+        } catch (Throwable t) {
+            log("获取宿主版本号失败，将默认执行 descCopyFix: " + t.getMessage());
+        }
+
+        if (shouldRunDescCopyFix) {
+            descCopyFix(lpparam, helper);
+        } else {
+            log("宿主版本号小于 8.9.0(8090300)，跳过 descCopyFix 逻辑。");
+        }
     }
 
     private void descCopyFix(XC_LoadPackage.LoadPackageParam lpparam, DexKitHelper helper) {
@@ -172,7 +200,22 @@ public class MainHook implements IXposedHookLoadPackage {
 
 
     private void executeOriginalHooks(XC_LoadPackage.LoadPackageParam lpparam, DexKitHelper helper) {
+        // 通用 RPC 数据分发处理
+        XC_MethodHook universalRpcHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                if (param.args == null || param.args.length < 3) return;
 
+                Object payload = param.args[2];
+                if (payload == null) return;
+
+                String className = payload.getClass().getName();
+
+                if (className.endsWith("EventReport$Request")) {
+                    parseEventReport(payload);
+                }
+            }
+        };
 
         if (isInternational) {
             try {
@@ -182,25 +225,9 @@ public class MainHook implements IXposedHookLoadPackage {
                 XposedHelpers.findAndHookMethod(oClass, helper.INTERNATIONAL_INVOKE_METHOD_NAME, Class.class, function6Class, new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        Class<?> payloadClass = (Class<?>) param.args[0];
                         Object handlerImpl = param.args[1];
-
-                        if (payloadClass != null && handlerImpl != null) {
-                            String className = payloadClass.getName();
-                            if (className.endsWith("EventReport$Request")) {
-
-                                XposedBridge.hookAllMethods(handlerImpl.getClass(), "invoke", new XC_MethodHook() {
-                                    @Override
-                                    protected void beforeHookedMethod(MethodHookParam invokeParam) throws Throwable {
-                                        if (invokeParam.args != null && invokeParam.args.length >= 3) {
-                                            Object payload = invokeParam.args[2];
-                                            if (payload != null) {
-                                                parseEventReport(payload);
-                                            }
-                                        }
-                                    }
-                                });
-                            }
+                        if (handlerImpl != null) {
+                            XposedBridge.hookAllMethods(handlerImpl.getClass(), "invoke", universalRpcHook);
                         }
                     }
                 });
@@ -209,38 +236,39 @@ public class MainHook implements IXposedHookLoadPackage {
             }
         } else {
             removeAdUnderPlayer(lpparam);
-            BiliGsonLobotomy.hookPegasusAd(lpparam.classLoader, helper.PEGASUS_MODEL_CLASS_NAME);
-
             try {
-                Class<?> targetClass = XposedHelpers.findClass(helper.CHRONOS_RPC_CLASS_NAME, lpparam.classLoader);
-                for (java.lang.reflect.Method method : targetClass.getDeclaredMethods()) {
-                    if (method.getName().equals("invoke")) {
-                        XposedBridge.hookMethod(method, new XC_MethodHook() {
-                            @Override
-                            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                                if (param.args == null || param.args.length < 3) return;
+                BiliGsonLobotomy.hookPegasusAd(lpparam.classLoader, helper.PEGASUS_MODEL_CLASS_NAME);
+            } catch (Throwable t) {}
 
-                                Object payload = param.args[2];
-                                if (payload == null) return;
-
-                                String className = payload.getClass().getName();
-
-                                if (className.endsWith("EventReport$Request")) {
-                                    parseEventReport(payload);
-                                }
-                            }
-                        });
-                        log("Hook ChronosRpc invoke 成功绑定类: " + helper.CHRONOS_RPC_CLASS_NAME);
-                        break;
+            // 【新版本策略】：使用 DexKit 获取到的动态类名
+            try {
+                if (helper.CHRONOS_RPC_CLASS_NAME != null && !helper.CHRONOS_RPC_CLASS_NAME.isEmpty()) {
+                    Class<?> targetClass = XposedHelpers.findClass(helper.CHRONOS_RPC_CLASS_NAME, lpparam.classLoader);
+                    for (java.lang.reflect.Method method : targetClass.getDeclaredMethods()) {
+                        if (method.getName().equals("invoke")) {
+                            XposedBridge.hookMethod(method, universalRpcHook);
+                            log("✅ Hook 新版 ChronosRpc 成功绑定类: " + helper.CHRONOS_RPC_CLASS_NAME);
+                            break;
+                        }
                     }
                 }
             } catch (Throwable t) {
-                log("error hooking chronosrpc invoke: " + t.toString());
+                log("Hook 新版 ChronosRpc 失败 (该版本可能不支持): " + t.getMessage());
+            }
+
+            // 【旧版本策略】：硬编码挂载经典的 ChronosMessageHandler
+            try {
+                String hardcodedTargetClass = "tv.danmaku.biliplayerv2.service.interact.biz.chronos.chronosrpc.ChronosMessageHandler";
+                Class<?> targetClass = XposedHelpers.findClass(hardcodedTargetClass, lpparam.classLoader);
+                XposedBridge.hookAllMethods(targetClass, "invoke", universalRpcHook);
+                log("✅ Hook 旧版 ChronosRpc 成功硬编码绑定类: " + hardcodedTargetClass);
+            } catch (Throwable t) {
+                log("Hook 旧版 ChronosRpc 失败 (新版可能不存在此旧类): " + t.getMessage());
             }
         }
         hookClipboardToJump(lpparam);
-
     }
+
 
     private void parseEventReport(Object payload) {
         try {
@@ -252,7 +280,10 @@ public class MainHook implements IXposedHookLoadPackage {
                 Map<?, ?> argsMap = (Map<?, ?>) extendsArgsObj;
                 String keyStr = String.valueOf(argsMap.get("key"));
 
-                if (keyStr.contains("DmsegLoader") && argsMap.containsKey("video_id")) {
+                log("【RPC 事件流】侦测到 Key: " + keyStr);
+
+                // 核心兼容点：同时放行 DmsegLoader(旧) 与 CommonDanmakuWorkFlows(新)
+                if ((keyStr.contains("DmsegLoader") || keyStr.contains("CommonDanmakuWorkFlows")) && argsMap.containsKey("video_id")) {
                     String cid = String.valueOf(argsMap.get("video_id"));
                     log("【动作A】检测到弹幕加载，准备请求 cid: " + cid);
                     fetchDanmakuAsync(cid);
@@ -279,7 +310,6 @@ public class MainHook implements IXposedHookLoadPackage {
                     if (clipData != null && clipData.getItemCount() > 0) {
                         final String copiedText = clipData.getItemAt(0).getText().toString();
                         log("【剪贴板】检测到复制动作，内容: " + copiedText);
-                        log("clipboardSetting stack Trace: " + Log.getStackTraceString(new Throwable()));
 
                         new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {
                             @Override
@@ -440,11 +470,8 @@ public class MainHook implements IXposedHookLoadPackage {
                     if (dynamicTargetViewId == -1) {
                         View rootView = (View) param.args[0];
                         if (rootView != null && rootView.getContext() != null) {
-                            // 动态获取：传入 控件名、"id"、包名
-                            // 请将 "collection_dialog_title_view" 替换为你实际想要隐藏的广告容器控件名
                             dynamicTargetViewId = rootView.getContext().getResources().getIdentifier("underplayer_container", "id", PACKAGE_NAME);
 
-                            // 容错处理：如果没找到这个控件名，赋值为 0，防止重复触发 getIdentifier 导致卡顿
                             if (dynamicTargetViewId == 0) {
                                 log("未能动态获取到控件 ID，请检查控件名是否正确");
                                 dynamicTargetViewId = 0;
@@ -464,10 +491,6 @@ public class MainHook implements IXposedHookLoadPackage {
                                 targetView.setLayoutParams(params);
                             }
                             targetView.setVisibility(View.GONE);
-                            if (targetView.getParent() instanceof View) {
-                                View parentRowContainer = (View) targetView.getParent();
-                                parentRowContainer.setVisibility(View.GONE);
-                            }
                         }
                     }
                 }
