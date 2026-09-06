@@ -84,6 +84,9 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             log("获取宿主版本号失败，将默认执行 descCopyFix: " + t.getMessage());
         }
+        BiliAdSniper.hook(lpparam.classLoader);
+        BiliSplashSniper.hook(lpparam.classLoader,helper);
+        BiliMentionedSniper.hook(lpparam.classLoader,helper);
 
         if (shouldRunDescCopyFix) {
             descCopyFix(lpparam, helper);

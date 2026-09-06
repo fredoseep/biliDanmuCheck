@@ -24,24 +24,30 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class DexKitHelper {
 
-    public String albumRecycleViewHolderClassName = "PJ0.e"; // 默认 fallback 值
+    public String albumRecycleViewHolderClassName = "PJ0.e";
     public String publishArchiveCollectionFieldName = "a";
     public String albumSelectPageViewClassName = "OH0.X";
     public String RECYCLER_VIEW_FIELD_NAME = "f";
     public String CHRONOS_RPC_CLASS_NAME = "tv.danmaku.biliplayerv2.service.interact.biz.chronos.chronosrpc.a";
 
     public String INTERNATIONAL_CHRONOS_RPC_CLASS_NAME = "com.bilibili.common.chronoscommon.o";
-
     public String INTERNATIONAL_INVOKE_METHOD_NAME = "f";
-
     public String DESCRIPTION_TEXTVIEW_CLASS_NAME = "Ym1.a";
     public String PEGASUS_MODEL_CLASS_NAME = "U9.h";
 
+    // 开屏广告跳过相关的 fallback 值
+    public String BASE_SPLASH_CLASS_NAME = "tv.danmaku.bili.splash.ad.page.BaseSplash";
+    public String SPLASH_READY_METHOD_NAME = "k8";
+    public String SPLASH_SKIP_METHOD_NAME = "Sf";
+
+    // 新增：视频提及控件相关的 fallback 值
+    public String VIDEO_MENTIONED_COMPONENT_CLASS_NAME = "com.bilibili.ship.theseus.ugc.intro.videomentioned.module.l";
+    public String VIEW_ENTRY_CLASS_NAME = "com.bilibili.app.gemini.ui.UIComponent$ViewEntry";
+    public String UI_COMPONENT_B_CLASS_NAME = "com.bilibili.app.gemini.ui.UIComponent$b";
+
+    // 开启测试模式，强制扫描并打印结果
     public final boolean IS_TESTING = false;
 
-    /**
-     * 解析并加载混淆变量。如果缓存有效则直接加载，否则启动 DexKit 扫描。
-     */
     public void resolve(XC_LoadPackage.LoadPackageParam lpparam) {
         File apkFile = new File(lpparam.appInfo.sourceDir);
         long currentApkTime = apkFile.lastModified();
@@ -56,7 +62,7 @@ public class DexKitHelper {
                 String cachedTimeStr = cacheProps.getProperty("apk_last_modified");
 
                 if (cachedTimeStr != null && cachedTimeStr.equals(String.valueOf(currentApkTime))) {
-                    MainHook.log("命中 DexKit 缓存，APK 未更新，跳过扫描");
+                    MainHook.log("Hit DexKit cache. APK not updated, skipping scan.");
                     albumRecycleViewHolderClassName = cacheProps.getProperty("albumRecycleViewHolderClassName", albumRecycleViewHolderClassName);
                     publishArchiveCollectionFieldName = cacheProps.getProperty("publishArchiveCollectionFieldName", publishArchiveCollectionFieldName);
                     albumSelectPageViewClassName = cacheProps.getProperty("albumSelectPageViewClassName", albumSelectPageViewClassName);
@@ -67,22 +73,29 @@ public class DexKitHelper {
                     INTERNATIONAL_INVOKE_METHOD_NAME = cacheProps.getProperty("INTERNATIONAL_INVOKE_METHOD_NAME", INTERNATIONAL_INVOKE_METHOD_NAME);
                     PEGASUS_MODEL_CLASS_NAME = cacheProps.getProperty("PEGASUS_MODEL_CLASS_NAME", PEGASUS_MODEL_CLASS_NAME);
 
+                    BASE_SPLASH_CLASS_NAME = cacheProps.getProperty("BASE_SPLASH_CLASS_NAME", BASE_SPLASH_CLASS_NAME);
+                    SPLASH_READY_METHOD_NAME = cacheProps.getProperty("SPLASH_READY_METHOD_NAME", SPLASH_READY_METHOD_NAME);
+                    SPLASH_SKIP_METHOD_NAME = cacheProps.getProperty("SPLASH_SKIP_METHOD_NAME", SPLASH_SKIP_METHOD_NAME);
+
+                    // 读取新增的视频提及缓存
+                    VIDEO_MENTIONED_COMPONENT_CLASS_NAME = cacheProps.getProperty("VIDEO_MENTIONED_COMPONENT_CLASS_NAME", VIDEO_MENTIONED_COMPONENT_CLASS_NAME);
+                    UI_COMPONENT_B_CLASS_NAME = cacheProps.getProperty("UI_COMPONENT_B_CLASS_NAME", UI_COMPONENT_B_CLASS_NAME);
+                    VIEW_ENTRY_CLASS_NAME = cacheProps.getProperty("VIEW_ENTRY_CLASS_NAME", VIEW_ENTRY_CLASS_NAME);
+
                     needScan = false;
                 }
             } catch (Exception e) {
-                MainHook.log("读取缓存失败，将重新扫描: " + e.getMessage());
+                MainHook.log("Failed to read cache, forcing rescan: " + e.getMessage());
             }
         }
 
-        if (needScan||IS_TESTING) {
-            MainHook.log(" B站版本更新或首次运行，启动 DexKit 深度扫描...");
+        if (needScan || IS_TESTING) {
+            MainHook.log("Starting DexKit deep scan...");
             try (DexKitBridge bridge = DexKitBridge.create(lpparam.appInfo.sourceDir)) {
                 if (bridge == null) {
-                    MainHook.log("❌ DexKit 初始化失败！");
+                    MainHook.log("DexKit initialization failed!");
                     return;
                 }
-
-
                 MethodMatcher matcher1 = MethodMatcher.create()
                         .name("onBindViewHolder")
                         .paramTypes("androidx.recyclerview.widget.RecyclerView$ViewHolder", "int")
@@ -197,11 +210,103 @@ public class DexKitHelper {
 
                 List<ClassData> pegasusResult = bridge.findClass(FindClass.create().matcher(pegasusMatcher));
 
-               if (!pegasusResult.isEmpty()) {
+                if (!pegasusResult.isEmpty()) {
                     PEGASUS_MODEL_CLASS_NAME = pegasusResult.get(0).getName();
                 } else {
                     MainHook.log("❌ 未匹配到推荐流模型类，退回使用硬编码默认值: " + PEGASUS_MODEL_CLASS_NAME);
                 }
+
+
+                ClassMatcher mentionedMatcher = ClassMatcher.create()
+                        .usingStrings("VideoMentionedModuleComponent.TabContainer (VideoMentionedModuleComponent.kt");
+
+                List<ClassData> mentionedResult = bridge.findClass(FindClass.create().matcher(mentionedMatcher));
+
+
+                if (!mentionedResult.isEmpty()) {
+                    ClassData mentionedClassData = mentionedResult.get(0);
+                    VIDEO_MENTIONED_COMPONENT_CLASS_NAME = mentionedClassData.getName();
+                    MainHook.log("Found Video Mentioned Component: " + VIDEO_MENTIONED_COMPONENT_CLASS_NAME);
+
+                    MethodMatcher createViewEntryMatcher = MethodMatcher.create()
+                            .paramTypes("android.content.Context", "android.view.ViewGroup");
+
+                    List<MethodData> createMethods = bridge.findMethod(FindMethod.create()
+                            .searchInClass(Collections.singleton(mentionedClassData))
+                            .matcher(createViewEntryMatcher));
+
+                    for (MethodData md : createMethods) {
+                        String returnType = md.getReturnTypeName();
+                        if (!returnType.equals("java.lang.Object")) {
+                            VIEW_ENTRY_CLASS_NAME = returnType;
+                            MainHook.log("动态推导出 ViewEntry 接口: " + VIEW_ENTRY_CLASS_NAME);
+                            break;
+                        }
+                    }
+
+                    int dollarIndex = VIEW_ENTRY_CLASS_NAME.indexOf('$');
+                    if (dollarIndex != -1) {
+                        String outerClassPrefix = VIEW_ENTRY_CLASS_NAME.substring(0, dollarIndex + 1);
+
+                        ClassMatcher bMatcher = ClassMatcher.create()
+                                .addInterface(ClassMatcher.create().className(VIEW_ENTRY_CLASS_NAME))
+                                .addMethod(MethodMatcher.create().name("<init>").paramCount(1));
+
+                        List<ClassData> bClassList = bridge.findClass(FindClass.create().matcher(bMatcher));
+
+                        for (ClassData bClass : bClassList) {
+                            if (bClass.getName().startsWith(outerClassPrefix)) {
+                                UI_COMPONENT_B_CLASS_NAME = bClass.getName();
+                                MainHook.log("动态推导出 ViewEntry 实现类 (原 subclass b): " + UI_COMPONENT_B_CLASS_NAME);
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    MainHook.log("Failed to find Video Mentioned Component, using fallback.");
+                }
+                ClassMatcher splashMatcher = ClassMatcher.create()
+                        .usingStrings("onSplashReady， realReady = ", "showSkipButton, skip clicked");
+
+                List<ClassData> splashClassResult = bridge.findClass(FindClass.create().matcher(splashMatcher));
+
+
+                if (!splashClassResult.isEmpty()) {
+                    ClassData splashClassData = splashClassResult.get(0);
+                    BASE_SPLASH_CLASS_NAME = splashClassData.getName();
+                    MainHook.log("找到 BaseSplash 类: " + BASE_SPLASH_CLASS_NAME);
+
+                    // 查找 onSplashReady 方法
+                    MethodMatcher readyMethodMatcher = MethodMatcher.create()
+                            .paramTypes("boolean")
+                            .usingStrings("onSplashReady， realReady = ");
+
+                    List<MethodData> readyMethodResult = bridge.findMethod(FindMethod.create()
+                            .searchInClass(Collections.singleton(splashClassData))
+                            .matcher(readyMethodMatcher));
+
+                    if (!readyMethodResult.isEmpty()) {
+                        SPLASH_READY_METHOD_NAME = readyMethodResult.get(0).getName();
+                        MainHook.log("找到 onSplashReady 方法: " + SPLASH_READY_METHOD_NAME);
+                    }
+
+                    // 查找 skip clicked 方法
+                    MethodMatcher skipMethodMatcher = MethodMatcher.create()
+                            .paramCount(0)
+                            .usingStrings("showSkipButton, skip clicked");
+
+                    List<MethodData> skipMethodResult = bridge.findMethod(FindMethod.create()
+                            .searchInClass(Collections.singleton(splashClassData))
+                            .matcher(skipMethodMatcher));
+
+                    if (!skipMethodResult.isEmpty()) {
+                        SPLASH_SKIP_METHOD_NAME = skipMethodResult.get(0).getName();
+                        MainHook.log("找到 SkipButton 方法: " + SPLASH_SKIP_METHOD_NAME);
+                    }
+                } else {
+                    MainHook.log("❌ 未匹配到 BaseSplash 类，退回使用硬编码默认值");
+                }
+
 
                 cacheProps.setProperty("apk_last_modified", String.valueOf(currentApkTime));
                 cacheProps.setProperty("albumRecycleViewHolderClassName", albumRecycleViewHolderClassName);
@@ -209,19 +314,28 @@ public class DexKitHelper {
                 cacheProps.setProperty("albumSelectPageViewClassName", albumSelectPageViewClassName);
                 cacheProps.setProperty("RECYCLER_VIEW_FIELD_NAME", RECYCLER_VIEW_FIELD_NAME);
                 cacheProps.setProperty("CHRONOS_RPC_CLASS_NAME", CHRONOS_RPC_CLASS_NAME);
-                cacheProps.setProperty("DESCRIPTION_TEXTVIEW_CLASS_NAME",DESCRIPTION_TEXTVIEW_CLASS_NAME);
-                cacheProps.setProperty("INTERNATIONAL_CHRONOS_RPC_CLASS_NAME",INTERNATIONAL_CHRONOS_RPC_CLASS_NAME);
-                cacheProps.setProperty("INTERNATIONAL_INVOKE_METHOD_NAME",INTERNATIONAL_INVOKE_METHOD_NAME);
+                cacheProps.setProperty("DESCRIPTION_TEXTVIEW_CLASS_NAME", DESCRIPTION_TEXTVIEW_CLASS_NAME);
+                cacheProps.setProperty("INTERNATIONAL_CHRONOS_RPC_CLASS_NAME", INTERNATIONAL_CHRONOS_RPC_CLASS_NAME);
+                cacheProps.setProperty("INTERNATIONAL_INVOKE_METHOD_NAME", INTERNATIONAL_INVOKE_METHOD_NAME);
                 cacheProps.setProperty("PEGASUS_MODEL_CLASS_NAME", PEGASUS_MODEL_CLASS_NAME);
+
+                cacheProps.setProperty("BASE_SPLASH_CLASS_NAME", BASE_SPLASH_CLASS_NAME);
+                cacheProps.setProperty("SPLASH_READY_METHOD_NAME", SPLASH_READY_METHOD_NAME);
+                cacheProps.setProperty("SPLASH_SKIP_METHOD_NAME", SPLASH_SKIP_METHOD_NAME);
+
+                // 保存新增的缓存
+                cacheProps.setProperty("VIDEO_MENTIONED_COMPONENT_CLASS_NAME", VIDEO_MENTIONED_COMPONENT_CLASS_NAME);
+                cacheProps.setProperty("UI_COMPONENT_B_CLASS_NAME", UI_COMPONENT_B_CLASS_NAME);
+                cacheProps.setProperty("VIEW_ENTRY_CLASS_NAME", VIEW_ENTRY_CLASS_NAME);
 
 
                 cacheFile.getParentFile().mkdirs();
                 try (FileOutputStream fos = new FileOutputStream(cacheFile)) {
                     cacheProps.store(fos, "DexKit Obfuscation Cache for BiliBili");
-                    MainHook.log(" DexKit 扫描完成，结果已持久化至缓存");
+                    MainHook.log("DexKit scan complete, results saved to cache.");
                 }
             } catch (Exception e) {
-                MainHook.log("❌ DexKit 扫描过程发生异常: " + e.getMessage());
+                MainHook.log("Exception during DexKit scan: " + e.getMessage());
             }
         }
     }
@@ -235,19 +349,20 @@ public class DexKitHelper {
         String outerClassName = innerClassName.substring(0, dollarIndex);
         return bridge.getClassData(outerClassName);
     }
+
     private static void listDataPrint(List<?> dataList) {
         if (dataList.isEmpty()) {
-            MainHook.log("error: class data list is empty");
+            MainHook.log("error: data list is empty");
             return;
         }
-        MainHook.log("found " + dataList.size() + " class");
+        MainHook.log("found " + dataList.size() + " items");
         for (Object data : dataList) {
             if (data instanceof ClassData) {
-                MainHook.log("found class name: " + ((ClassData) data).getName() + " ");
+                MainHook.log("found class name: " + ((ClassData) data).getName());
             } else if (data instanceof MethodData) {
-                MainHook.log("found method name: " + ((MethodData) data).getName() + " ");
+                MainHook.log("found method name: " + ((MethodData) data).getName());
             } else if (data instanceof FieldData) {
-                MainHook.log("found field name: " + ((FieldData) data).getName() + " ");
+                MainHook.log("found field name: " + ((FieldData) data).getName());
             }
         }
     }
