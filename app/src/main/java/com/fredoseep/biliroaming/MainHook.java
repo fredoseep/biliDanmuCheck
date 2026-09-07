@@ -87,6 +87,7 @@ public class MainHook implements IXposedHookLoadPackage {
         BiliAdSniper.hook(lpparam.classLoader);
         BiliSplashSniper.hook(lpparam.classLoader,helper);
         BiliMentionedSniper.hook(lpparam.classLoader,helper);
+        BiliBottomNavSniper.hook(lpparam.classLoader);
 
         if (shouldRunDescCopyFix) {
             descCopyFix(lpparam, helper);
