@@ -7,12 +7,10 @@ import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.net.Uri;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.view.GestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -62,6 +60,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
         log("开始执行业务 Hook 逻辑...");
         executeOriginalHooks(lpparam, helper);
+        BiliCardAdSniper.hook(lpparam.classLoader,helper);
 
         // ---- 新增：版本号检测逻辑 ----
         boolean shouldRunDescCopyFix = true;
