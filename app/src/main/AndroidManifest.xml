@@ -17,10 +17,13 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="fredoxposed" />
+            android:value="去除B站广告及查看弹幕发送者" />
         <meta-data
             android:name="xposedminversion"
             android:value="54" />
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposed_scope" />
 
     </application>
 
