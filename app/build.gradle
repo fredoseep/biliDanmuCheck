@@ -3,13 +3,13 @@ plugins {
 }
 
 android {
-    namespace 'com.fredoseep.biliroaming'
+    namespace 'io.github.fredoseep.bilidanmucheck'
     compileSdk {
         version = release(36)
     }
 
     defaultConfig {
-        applicationId "com.fredoseep.biliroaming"
+        applicationId "io.github.fredoseep.bilidanmucheck"
         minSdk 26
         targetSdk 36
         versionCode 1
