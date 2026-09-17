@@ -47,7 +47,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        if (!lpparam.packageName.equals(PACKAGE_NAME) && !lpparam.packageName.equals(INTERNATIONAL_PACKAGE_NAME)&& !lpparam.packageName.equals(PACKAGE_NAME_ALIAS))
+        if (!lpparam.packageName.equals(PACKAGE_NAME) && !lpparam.packageName.equals(INTERNATIONAL_PACKAGE_NAME) && !lpparam.packageName.equals(PACKAGE_NAME_ALIAS))
             return;
         if (lpparam.packageName.equals(INTERNATIONAL_PACKAGE_NAME)) isInternational = true;
 
@@ -62,7 +62,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
         log("开始执行业务 Hook 逻辑...");
         executeOriginalHooks(lpparam, helper);
-        BiliCardAdSniper.hook(lpparam.classLoader,helper);
+        BiliCardAdSniper.hook(lpparam.classLoader, helper);
 
         // ---- 新增：版本号检测逻辑 ----
         boolean shouldRunDescCopyFix = true;
@@ -86,9 +86,12 @@ public class MainHook implements IXposedHookLoadPackage {
             log("获取宿主版本号失败，将默认执行 descCopyFix: " + t.getMessage());
         }
         BiliAdSniper.hook(lpparam.classLoader);
-        BiliSplashSniper.hook(lpparam.classLoader,helper);
-        BiliMentionedSniper.hook(lpparam.classLoader,helper);
+        BiliSplashSniper.hook(lpparam.classLoader, helper);
+        BiliMentionedSniper.hook(lpparam.classLoader, helper);
         BiliBottomNavSniper.hook(lpparam.classLoader);
+        GlobalAdSniperEngine.hook(lpparam.classLoader,helper);
+        PacketSniffer.hook(lpparam.classLoader);
+
 
         if (shouldRunDescCopyFix) {
             descCopyFix(lpparam, helper);
@@ -243,7 +246,8 @@ public class MainHook implements IXposedHookLoadPackage {
             removeAdUnderPlayer(lpparam);
             try {
                 BiliGsonLobotomy.hookPegasusAd(lpparam.classLoader, helper.PEGASUS_MODEL_CLASS_NAME);
-            } catch (Throwable t) {}
+            } catch (Throwable t) {
+            }
 
             // 【新版本策略】：使用 DexKit 获取到的动态类名
             try {

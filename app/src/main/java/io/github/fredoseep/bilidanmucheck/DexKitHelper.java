@@ -50,17 +50,18 @@ public class DexKitHelper {
     public String HOME_CARD_ADAPTER_CLASS_NAME = "ct0.c";
 
     public String CARD_INFO_SETTING_METHOD_NAME = "m";
-    
+
+    public String PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME = "g";
     private static final String TAG = "dexkitHelper";
 
     // 开启测试模式，强制扫描并打印结果
-    public final boolean IS_TESTING = false;
+    public final boolean IS_TESTING = true;
 
     public void resolve(XC_LoadPackage.LoadPackageParam lpparam) {
         File apkFile = new File(lpparam.appInfo.sourceDir);
         long currentApkTime = apkFile.lastModified();
         File cacheFile = new File(lpparam.appInfo.dataDir, "cache/dexkit_hook_cache.properties");
-        Log.d(TAG,"cache file directory: "+cacheFile.getPath().toString());
+        Log.d(TAG, "cache file directory: " + cacheFile.getPath().toString());
         Properties cacheProps = new Properties();
         boolean needScan = true;
 
@@ -70,7 +71,7 @@ public class DexKitHelper {
                 String cachedTimeStr = cacheProps.getProperty("apk_last_modified");
 
                 if (cachedTimeStr != null && cachedTimeStr.equals(String.valueOf(currentApkTime))) {
-                    Log.d(TAG,"Hit DexKit cache. APK not updated, skipping scan.");
+                    Log.d(TAG, "Hit DexKit cache. APK not updated, skipping scan.");
                     albumRecycleViewHolderClassName = cacheProps.getProperty("albumRecycleViewHolderClassName", albumRecycleViewHolderClassName);
                     publishArchiveCollectionFieldName = cacheProps.getProperty("publishArchiveCollectionFieldName", publishArchiveCollectionFieldName);
                     albumSelectPageViewClassName = cacheProps.getProperty("albumSelectPageViewClassName", albumSelectPageViewClassName);
@@ -89,23 +90,24 @@ public class DexKitHelper {
                     VIDEO_MENTIONED_COMPONENT_CLASS_NAME = cacheProps.getProperty("VIDEO_MENTIONED_COMPONENT_CLASS_NAME", VIDEO_MENTIONED_COMPONENT_CLASS_NAME);
                     UI_COMPONENT_B_CLASS_NAME = cacheProps.getProperty("UI_COMPONENT_B_CLASS_NAME", UI_COMPONENT_B_CLASS_NAME);
                     VIEW_ENTRY_CLASS_NAME = cacheProps.getProperty("VIEW_ENTRY_CLASS_NAME", VIEW_ENTRY_CLASS_NAME);
-                    SEARCH_RESULT_ADAPTER_CLASS_NAME = cacheProps.getProperty("SEARCH_RESULT_ADAPTER_CLASS_NAME",SEARCH_RESULT_ADAPTER_CLASS_NAME);
+                    SEARCH_RESULT_ADAPTER_CLASS_NAME = cacheProps.getProperty("SEARCH_RESULT_ADAPTER_CLASS_NAME", SEARCH_RESULT_ADAPTER_CLASS_NAME);
                     HOME_CARD_ADAPTER_CLASS_NAME = cacheProps.getProperty("HOME_CARD_ADAPTER_CLASS_NAME", HOME_CARD_ADAPTER_CLASS_NAME);
                     CARD_INFO_SETTING_METHOD_NAME = cacheProps.getProperty("CARD_INFO_SETTING_METHOD_NAME", CARD_INFO_SETTING_METHOD_NAME);
 
+                    PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME = cacheProps.getProperty("PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME", PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME);
 
                     needScan = false;
                 }
             } catch (Exception e) {
-                Log.d(TAG,"Failed to read cache, forcing rescan: " + e.getMessage());
+                Log.d(TAG, "Failed to read cache, forcing rescan: " + e.getMessage());
             }
         }
 
         if (needScan || IS_TESTING) {
-            Log.d(TAG,"Starting DexKit deep scan...");
+            Log.d(TAG, "Starting DexKit deep scan...");
             try (DexKitBridge bridge = DexKitBridge.create(lpparam.appInfo.sourceDir)) {
                 if (bridge == null) {
-                    Log.d(TAG,"DexKit initialization failed!");
+                    Log.d(TAG, "DexKit initialization failed!");
                     return;
                 }
                 MethodMatcher matcher1 = MethodMatcher.create()
@@ -116,7 +118,7 @@ public class DexKitHelper {
                 List<MethodData> result1 = bridge.findMethod(FindMethod.create().matcher(matcher1));
                 if (!result1.isEmpty()) {
                     albumRecycleViewHolderClassName = result1.get(0).getClassName();
-                    Log.d(TAG,"找到 AlbumRecycleViewHolder: " + albumRecycleViewHolderClassName);
+                    Log.d(TAG, "找到 AlbumRecycleViewHolder: " + albumRecycleViewHolderClassName);
 
                     FieldMatcher fieldMatcher = FieldMatcher.create()
                             .declaredClass(albumRecycleViewHolderClassName)
@@ -125,7 +127,7 @@ public class DexKitHelper {
                     List<FieldData> fields = bridge.findField(FindField.create().matcher(fieldMatcher));
                     if (!fields.isEmpty()) {
                         publishArchiveCollectionFieldName = fields.get(0).getName();
-                        Log.d(TAG,"找到 List 字段名: " + publishArchiveCollectionFieldName);
+                        Log.d(TAG, "找到 List 字段名: " + publishArchiveCollectionFieldName);
                     }
                 }
 
@@ -140,7 +142,7 @@ public class DexKitHelper {
                 List<ClassData> result2 = bridge.findClass(FindClass.create().matcher(viewBindingMatcher));
                 if (!result2.isEmpty()) {
                     albumSelectPageViewClassName = result2.get(0).getName();
-                    Log.d(TAG,"找到 AlbumSelectPageView: " + albumSelectPageViewClassName);
+                    Log.d(TAG, "找到 AlbumSelectPageView: " + albumSelectPageViewClassName);
 
                     FieldMatcher rvFieldMatcher = FieldMatcher.create()
                             .declaredClass(albumSelectPageViewClassName)
@@ -149,7 +151,7 @@ public class DexKitHelper {
                     List<FieldData> fields = bridge.findField(FindField.create().matcher(rvFieldMatcher));
                     if (!fields.isEmpty()) {
                         RECYCLER_VIEW_FIELD_NAME = fields.get(0).getName();
-                        Log.d(TAG,"找到 RecyclerView 字段名: " + RECYCLER_VIEW_FIELD_NAME);
+                        Log.d(TAG, "找到 RecyclerView 字段名: " + RECYCLER_VIEW_FIELD_NAME);
                     }
                 }
 
@@ -159,7 +161,7 @@ public class DexKitHelper {
                 List<MethodData> result3 = bridge.findMethod(FindMethod.create().matcher(matcher3));
                 if (!result3.isEmpty()) {
                     CHRONOS_RPC_CLASS_NAME = result3.get(0).getClassName();
-                    Log.d(TAG,"找到 ChronosRpc: " + CHRONOS_RPC_CLASS_NAME);
+                    Log.d(TAG, "找到 ChronosRpc: " + CHRONOS_RPC_CLASS_NAME);
                 }
 
                 List<ClassData> descriptionTextViewClassDataList = bridge.findClass(FindClass.create()
@@ -169,7 +171,7 @@ public class DexKitHelper {
                         ))
                 );
                 if (descriptionTextViewClassDataList.isEmpty()) {
-                    Log.d(TAG,"DexKit fail to find descriptionTextViewClass");
+                    Log.d(TAG, "DexKit fail to find descriptionTextViewClass");
                 } else {
                     ClassData outerClass = getOuterClass(bridge, descriptionTextViewClassDataList.get(0));
                     if (outerClass != null) {
@@ -187,7 +189,7 @@ public class DexKitHelper {
                 );
 
                 if (internationalChronosRPCClassDataList.isEmpty()) {
-                    Log.d(TAG,"DexKit fail to find internationalChronosRPCClass");
+                    Log.d(TAG, "DexKit fail to find internationalChronosRPCClass");
                 } else {
                     ClassData internationalChronosRPCClassData = getOuterClass(bridge, internationalChronosRPCClassDataList.get(0));
 
@@ -203,12 +205,12 @@ public class DexKitHelper {
                                 )
                         );
                         if (internationalInvokeMethodDataList.isEmpty()) {
-                            Log.d(TAG,"DexKit fail to find internationalInvokeMethod");
+                            Log.d(TAG, "DexKit fail to find internationalInvokeMethod");
                         } else {
                             INTERNATIONAL_INVOKE_METHOD_NAME = internationalInvokeMethodDataList.get(0).getName();
                         }
                     } else {
-                        Log.d(TAG,"Warning: internationalChronosRPCClassData 的外部类未找到 (可能已不再是内部类)");
+                        Log.d(TAG, "Warning: internationalChronosRPCClassData 的外部类未找到 (可能已不再是内部类)");
                     }
 
 
@@ -225,7 +227,7 @@ public class DexKitHelper {
                 if (!pegasusResult.isEmpty()) {
                     PEGASUS_MODEL_CLASS_NAME = pegasusResult.get(0).getName();
                 } else {
-                    Log.d(TAG,"❌ 未匹配到推荐流模型类，退回使用硬编码默认值: " + PEGASUS_MODEL_CLASS_NAME);
+                    Log.d(TAG, "❌ 未匹配到推荐流模型类，退回使用硬编码默认值: " + PEGASUS_MODEL_CLASS_NAME);
                 }
 
 
@@ -238,7 +240,7 @@ public class DexKitHelper {
                 if (!mentionedResult.isEmpty()) {
                     ClassData mentionedClassData = mentionedResult.get(0);
                     VIDEO_MENTIONED_COMPONENT_CLASS_NAME = mentionedClassData.getName();
-                    Log.d(TAG,"Found Video Mentioned Component: " + VIDEO_MENTIONED_COMPONENT_CLASS_NAME);
+                    Log.d(TAG, "Found Video Mentioned Component: " + VIDEO_MENTIONED_COMPONENT_CLASS_NAME);
 
                     MethodMatcher createViewEntryMatcher = MethodMatcher.create()
                             .paramTypes("android.content.Context", "android.view.ViewGroup");
@@ -251,7 +253,7 @@ public class DexKitHelper {
                         String returnType = md.getReturnTypeName();
                         if (!returnType.equals("java.lang.Object")) {
                             VIEW_ENTRY_CLASS_NAME = returnType;
-                            Log.d(TAG,"动态推导出 ViewEntry 接口: " + VIEW_ENTRY_CLASS_NAME);
+                            Log.d(TAG, "动态推导出 ViewEntry 接口: " + VIEW_ENTRY_CLASS_NAME);
                             break;
                         }
                     }
@@ -269,13 +271,13 @@ public class DexKitHelper {
                         for (ClassData bClass : bClassList) {
                             if (bClass.getName().startsWith(outerClassPrefix)) {
                                 UI_COMPONENT_B_CLASS_NAME = bClass.getName();
-                                Log.d(TAG,"动态推导出 ViewEntry 实现类 (原 subclass b): " + UI_COMPONENT_B_CLASS_NAME);
+                                Log.d(TAG, "动态推导出 ViewEntry 实现类 (原 subclass b): " + UI_COMPONENT_B_CLASS_NAME);
                                 break;
                             }
                         }
                     }
                 } else {
-                    Log.d(TAG,"Failed to find Video Mentioned Component, using fallback.");
+                    Log.d(TAG, "Failed to find Video Mentioned Component, using fallback.");
                 }
                 ClassMatcher splashMatcher = ClassMatcher.create()
                         .usingStrings("onSplashReady， realReady = ", "showSkipButton, skip clicked");
@@ -286,7 +288,7 @@ public class DexKitHelper {
                 if (!splashClassResult.isEmpty()) {
                     ClassData splashClassData = splashClassResult.get(0);
                     BASE_SPLASH_CLASS_NAME = splashClassData.getName();
-                    Log.d(TAG,"找到 BaseSplash 类: " + BASE_SPLASH_CLASS_NAME);
+                    Log.d(TAG, "找到 BaseSplash 类: " + BASE_SPLASH_CLASS_NAME);
 
                     // 查找 onSplashReady 方法
                     MethodMatcher readyMethodMatcher = MethodMatcher.create()
@@ -299,7 +301,7 @@ public class DexKitHelper {
 
                     if (!readyMethodResult.isEmpty()) {
                         SPLASH_READY_METHOD_NAME = readyMethodResult.get(0).getName();
-                        Log.d(TAG,"找到 onSplashReady 方法: " + SPLASH_READY_METHOD_NAME);
+                        Log.d(TAG, "找到 onSplashReady 方法: " + SPLASH_READY_METHOD_NAME);
                     }
 
                     // 查找 skip clicked 方法
@@ -313,10 +315,10 @@ public class DexKitHelper {
 
                     if (!skipMethodResult.isEmpty()) {
                         SPLASH_SKIP_METHOD_NAME = skipMethodResult.get(0).getName();
-                        Log.d(TAG,"找到 SkipButton 方法: " + SPLASH_SKIP_METHOD_NAME);
+                        Log.d(TAG, "找到 SkipButton 方法: " + SPLASH_SKIP_METHOD_NAME);
                     }
                 } else {
-                    Log.d(TAG,"❌ 未匹配到 BaseSplash 类，退回使用硬编码默认值");
+                    Log.d(TAG, "❌ 未匹配到 BaseSplash 类，退回使用硬编码默认值");
                 }
 
                 List<ClassData> searchResultAdapterClassDataList = bridge.findClass(FindClass.create()
@@ -327,7 +329,7 @@ public class DexKitHelper {
                                         .addMethod(
                                                 MethodMatcher.create().name("getItemCount")
                                         )
-                                        .addMethod( MethodMatcher.create().name("getItemViewType"))
+                                        .addMethod(MethodMatcher.create().name("getItemViewType"))
                                         .addMethod(MethodMatcher.create().name("onCreateViewHolder"))
                                         .addMethod(MethodMatcher.create().name("onBindViewHolder"))
                         )
@@ -356,6 +358,17 @@ public class DexKitHelper {
                 CARD_INFO_SETTING_METHOD_NAME = cardInfoSettingMethodDataList.get(0).getMethodName();
 
 
+                List<MethodData> pegasusGsonParserParserMethodDataList = bridge.findMethod(FindMethod.create()
+                        .searchInClass(bridge.findClass(FindClass.create()
+                                .matcher(ClassMatcher.create().className("com.bilibili.pegasus.request.PegasusGsonParser"))
+                        ))
+                        .matcher(MethodMatcher.create()
+                                .paramCount(1)
+                                .paramTypes("okhttp3.ResponseBody")
+                        )
+                );
+                PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME = pegasusGsonParserParserMethodDataList.get(0).getMethodName();
+
 
                 cacheProps.setProperty("apk_last_modified", String.valueOf(currentApkTime));
                 cacheProps.setProperty("albumRecycleViewHolderClassName", albumRecycleViewHolderClassName);
@@ -376,18 +389,19 @@ public class DexKitHelper {
                 cacheProps.setProperty("VIDEO_MENTIONED_COMPONENT_CLASS_NAME", VIDEO_MENTIONED_COMPONENT_CLASS_NAME);
                 cacheProps.setProperty("UI_COMPONENT_B_CLASS_NAME", UI_COMPONENT_B_CLASS_NAME);
                 cacheProps.setProperty("VIEW_ENTRY_CLASS_NAME", VIEW_ENTRY_CLASS_NAME);
-                cacheProps.setProperty("SEARCH_RESULT_ADAPTER_CLASS_NAME",SEARCH_RESULT_ADAPTER_CLASS_NAME);
+                cacheProps.setProperty("SEARCH_RESULT_ADAPTER_CLASS_NAME", SEARCH_RESULT_ADAPTER_CLASS_NAME);
                 cacheProps.setProperty("HOME_CARD_ADAPTER_CLASS_NAME", HOME_CARD_ADAPTER_CLASS_NAME);
                 cacheProps.setProperty("CARD_INFO_SETTING_METHOD_NAME", CARD_INFO_SETTING_METHOD_NAME);
 
+                cacheProps.setProperty("PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME", PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME);
 
                 cacheFile.getParentFile().mkdirs();
                 try (FileOutputStream fos = new FileOutputStream(cacheFile)) {
                     cacheProps.store(fos, "DexKit Obfuscation Cache for BiliBili");
-                    Log.d(TAG,"DexKit scan complete, results saved to cache.");
+                    Log.d(TAG, "DexKit scan complete, results saved to cache.");
                 }
             } catch (Exception e) {
-                Log.d(TAG,"Exception during DexKit scan: " + e.getMessage());
+                Log.d(TAG, "Exception during DexKit scan: " + e.getMessage());
             }
         }
     }
@@ -404,17 +418,17 @@ public class DexKitHelper {
 
     private static void listDataPrint(List<?> dataList) {
         if (dataList.isEmpty()) {
-            Log.d(TAG,"error: data list is empty");
+            Log.d(TAG, "error: data list is empty");
             return;
         }
-        Log.d(TAG,"found " + dataList.size() + " items");
+        Log.d(TAG, "found " + dataList.size() + " items");
         for (Object data : dataList) {
             if (data instanceof ClassData) {
-                Log.d(TAG,"found class name: " + ((ClassData) data).getName());
+                Log.d(TAG, "found class name: " + ((ClassData) data).getName());
             } else if (data instanceof MethodData) {
-                Log.d(TAG,"found method name: " + ((MethodData) data).getName());
+                Log.d(TAG, "found method name: " + ((MethodData) data).getName());
             } else if (data instanceof FieldData) {
-                Log.d(TAG,"found field name: " + ((FieldData) data).getName());
+                Log.d(TAG, "found field name: " + ((FieldData) data).getName());
             }
         }
     }
