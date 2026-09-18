@@ -52,10 +52,14 @@ public class DexKitHelper {
     public String CARD_INFO_SETTING_METHOD_NAME = "m";
 
     public String PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME = "g";
+
+    public String VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME = "d";
+
+    public String VIP_PREDICT_REQUEST_CLASS_NAME = "retrofit2.h";
     private static final String TAG = "dexkitHelper";
 
     // 开启测试模式，强制扫描并打印结果
-    public final boolean IS_TESTING = true;
+    public final boolean IS_TESTING = BuildConfig.DEBUG;
 
     public void resolve(XC_LoadPackage.LoadPackageParam lpparam) {
         File apkFile = new File(lpparam.appInfo.sourceDir);
@@ -95,6 +99,8 @@ public class DexKitHelper {
                     CARD_INFO_SETTING_METHOD_NAME = cacheProps.getProperty("CARD_INFO_SETTING_METHOD_NAME", CARD_INFO_SETTING_METHOD_NAME);
 
                     PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME = cacheProps.getProperty("PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME", PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME);
+                    VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME = cacheProps.getProperty("VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME", VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME);
+                    VIP_PREDICT_REQUEST_CLASS_NAME = cacheProps.getProperty("VIP_PREDICT_REQUEST_CLASS_NAME", VIP_PREDICT_REQUEST_CLASS_NAME);
 
                     needScan = false;
                 }
@@ -369,6 +375,24 @@ public class DexKitHelper {
                 );
                 PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME = pegasusGsonParserParserMethodDataList.get(0).getMethodName();
 
+                List<MethodData> vipOpenMembershipPredictScoreMethodDataList = bridge.findMethod(FindMethod.create()
+                        .searchInClass(bridge.findClass(FindClass.create()
+                                .matcher(ClassMatcher.create().className("com.bilibili.tensorflow.model.mem.VipOpenMembershipPredictTFClient"))
+                        ))
+                        .matcher(MethodMatcher.create()
+                                .paramCount(2)
+                                .paramTypes("java.util.List","java.nio.ByteBuffer")
+                        )
+                );
+                VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME = vipOpenMembershipPredictScoreMethodDataList.get(0).getMethodName();
+                List<ClassData> vipPredictRequestClassDataList = bridge.findClass(FindClass.create()
+                        .searchPackages("retrofit2")
+                        .matcher(ClassMatcher.create()
+                                .usingStrings("Response from "," was null but response body type was declared as non-null")
+                        )
+                );
+                VIDEO_MENTIONED_COMPONENT_CLASS_NAME = vipPredictRequestClassDataList.get(0).getName();
+
 
                 cacheProps.setProperty("apk_last_modified", String.valueOf(currentApkTime));
                 cacheProps.setProperty("albumRecycleViewHolderClassName", albumRecycleViewHolderClassName);
@@ -394,6 +418,8 @@ public class DexKitHelper {
                 cacheProps.setProperty("CARD_INFO_SETTING_METHOD_NAME", CARD_INFO_SETTING_METHOD_NAME);
 
                 cacheProps.setProperty("PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME", PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME);
+                cacheProps.setProperty("VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME", VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME);
+                cacheProps.setProperty("VIP_PREDICT_REQUEST_CLASS_NAME", VIP_PREDICT_REQUEST_CLASS_NAME);
 
                 cacheFile.getParentFile().mkdirs();
                 try (FileOutputStream fos = new FileOutputStream(cacheFile)) {
