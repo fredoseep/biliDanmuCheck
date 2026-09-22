@@ -8,6 +8,7 @@ import org.luckypray.dexkit.query.FindField;
 import org.luckypray.dexkit.query.FindMethod;
 import org.luckypray.dexkit.query.matchers.ClassMatcher;
 import org.luckypray.dexkit.query.matchers.FieldMatcher;
+import org.luckypray.dexkit.query.matchers.FieldsMatcher;
 import org.luckypray.dexkit.query.matchers.MethodMatcher;
 import org.luckypray.dexkit.result.ClassData;
 import org.luckypray.dexkit.result.FieldData;
@@ -56,6 +57,8 @@ public class DexKitHelper {
     public String VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME = "d";
 
     public String VIP_PREDICT_REQUEST_CLASS_NAME = "retrofit2.h";
+
+    public String NATIVE_WEBVIEW_SUB_CLASS_NAME = "com.bilibili.app.comm.bh.NativeWebView$d";
     private static final String TAG = "dexkitHelper";
 
     // 开启测试模式，强制扫描并打印结果
@@ -64,6 +67,15 @@ public class DexKitHelper {
     public void resolve(XC_LoadPackage.LoadPackageParam lpparam) {
         File apkFile = new File(lpparam.appInfo.sourceDir);
         long currentApkTime = apkFile.lastModified();
+        long currentModuleTime = 0;
+        try {
+            String modulePath = DexKitHelper.class.getProtectionDomain().getCodeSource().getLocation().getPath();
+            File moduleApk = new File(modulePath);
+            currentModuleTime = moduleApk.lastModified();
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to get module apk time: " + e.getMessage());
+        }
+
         File cacheFile = new File(lpparam.appInfo.dataDir, "cache/dexkit_hook_cache.properties");
         Log.d(TAG, "cache file directory: " + cacheFile.getPath().toString());
         Properties cacheProps = new Properties();
@@ -73,9 +85,12 @@ public class DexKitHelper {
             try (FileInputStream fis = new FileInputStream(cacheFile)) {
                 cacheProps.load(fis);
                 String cachedTimeStr = cacheProps.getProperty("apk_last_modified");
+                String cachedModuleTimeStr = cacheProps.getProperty("module_last_modified");
 
-                if (cachedTimeStr != null && cachedTimeStr.equals(String.valueOf(currentApkTime))) {
-                    Log.d(TAG, "Hit DexKit cache. APK not updated, skipping scan.");
+                if (cachedTimeStr != null && cachedTimeStr.equals(String.valueOf(currentApkTime))
+                        && cachedModuleTimeStr != null && cachedModuleTimeStr.equals(String.valueOf(currentModuleTime))
+                        && currentModuleTime != 0) {
+                    Log.d(TAG, "Hit DexKit cache. Neither host nor module updated, skipping scan.");
                     albumRecycleViewHolderClassName = cacheProps.getProperty("albumRecycleViewHolderClassName", albumRecycleViewHolderClassName);
                     publishArchiveCollectionFieldName = cacheProps.getProperty("publishArchiveCollectionFieldName", publishArchiveCollectionFieldName);
                     albumSelectPageViewClassName = cacheProps.getProperty("albumSelectPageViewClassName", albumSelectPageViewClassName);
@@ -101,6 +116,7 @@ public class DexKitHelper {
                     PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME = cacheProps.getProperty("PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME", PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME);
                     VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME = cacheProps.getProperty("VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME", VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME);
                     VIP_PREDICT_REQUEST_CLASS_NAME = cacheProps.getProperty("VIP_PREDICT_REQUEST_CLASS_NAME", VIP_PREDICT_REQUEST_CLASS_NAME);
+                    NATIVE_WEBVIEW_SUB_CLASS_NAME = cacheProps.getProperty("NATIVE_WEBVIEW_SUB_CLASS_NAME", NATIVE_WEBVIEW_SUB_CLASS_NAME);
 
                     needScan = false;
                 }
@@ -108,7 +124,6 @@ public class DexKitHelper {
                 Log.d(TAG, "Failed to read cache, forcing rescan: " + e.getMessage());
             }
         }
-
         if (needScan || IS_TESTING) {
             Log.d(TAG, "Starting DexKit deep scan...");
             try (DexKitBridge bridge = DexKitBridge.create(lpparam.appInfo.sourceDir)) {
@@ -118,8 +133,7 @@ public class DexKitHelper {
                 }
                 MethodMatcher matcher1 = MethodMatcher.create()
                         .name("onBindViewHolder")
-                        .paramTypes("androidx.recyclerview.widget.RecyclerView$ViewHolder", "int")
-                        .usingStrings("这里填入独有字符串");
+                        .paramTypes("androidx.recyclerview.widget.RecyclerView$ViewHolder", "int");
 
                 List<MethodData> result1 = bridge.findMethod(FindMethod.create().matcher(matcher1));
                 if (!result1.isEmpty()) {
@@ -381,20 +395,48 @@ public class DexKitHelper {
                         ))
                         .matcher(MethodMatcher.create()
                                 .paramCount(2)
-                                .paramTypes("java.util.List","java.nio.ByteBuffer")
+                                .paramTypes("java.util.List", "java.nio.ByteBuffer")
                         )
                 );
                 VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME = vipOpenMembershipPredictScoreMethodDataList.get(0).getMethodName();
                 List<ClassData> vipPredictRequestClassDataList = bridge.findClass(FindClass.create()
                         .searchPackages("retrofit2")
                         .matcher(ClassMatcher.create()
-                                .usingStrings("Response from "," was null but response body type was declared as non-null")
+                                .usingStrings("Response from ", " was null but response body type was declared as non-null")
                         )
                 );
                 VIDEO_MENTIONED_COMPONENT_CLASS_NAME = vipPredictRequestClassDataList.get(0).getName();
 
+                List<ClassData> nativeWebViewSubClassDataList = bridge.findClass(FindClass.create()
+                        .searchPackages("com.bilibili.app.comm")
+                        .matcher(ClassMatcher.create()
+                                // 1. 父类必须是 WebViewClient
+                                .superClass("android.webkit.WebViewClient")
+                                // 2. 字段总数严格等于 2 (去掉对未知类名的字段类型匹配)
+                                .fieldCount(2)
+                                // 3. 实现了 shouldInterceptRequest(WebView, WebResourceRequest)
+                                .addMethod(MethodMatcher.create()
+                                        .name("shouldInterceptRequest")
+                                        .paramTypes(
+                                                "android.webkit.WebView",
+                                                "android.webkit.WebResourceRequest"
+                                        )
+                                )
+                                // 4. 重写了 Ssl 错误处理（加这一层双保险，彻底排除其它无关实现）
+                                .addMethod(MethodMatcher.create()
+                                        .name("onReceivedSslError")
+                                        .paramTypes(
+                                                "android.webkit.WebView",
+                                                "android.webkit.SslErrorHandler",
+                                                "android.net.http.SslError"
+                                        )
+                                )
+                        )
+                );
+                NATIVE_WEBVIEW_SUB_CLASS_NAME = nativeWebViewSubClassDataList.get(0).getName();
 
                 cacheProps.setProperty("apk_last_modified", String.valueOf(currentApkTime));
+                cacheProps.setProperty("module_last_modified", String.valueOf(currentModuleTime));
                 cacheProps.setProperty("albumRecycleViewHolderClassName", albumRecycleViewHolderClassName);
                 cacheProps.setProperty("publishArchiveCollectionFieldName", publishArchiveCollectionFieldName);
                 cacheProps.setProperty("albumSelectPageViewClassName", albumSelectPageViewClassName);
@@ -420,6 +462,7 @@ public class DexKitHelper {
                 cacheProps.setProperty("PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME", PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME);
                 cacheProps.setProperty("VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME", VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME);
                 cacheProps.setProperty("VIP_PREDICT_REQUEST_CLASS_NAME", VIP_PREDICT_REQUEST_CLASS_NAME);
+                cacheProps.setProperty("NATIVE_WEBVIEW_SUB_CLASS_NAME", NATIVE_WEBVIEW_SUB_CLASS_NAME);
 
                 cacheFile.getParentFile().mkdirs();
                 try (FileOutputStream fos = new FileOutputStream(cacheFile)) {
