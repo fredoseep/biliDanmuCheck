@@ -93,7 +93,6 @@ public class MainHook implements IXposedHookLoadPackage {
         PacketSniffer.hook(lpparam.classLoader);
         VIPPredict.hook(lpparam.classLoader,helper);
         LiveRoomAdSniper.hook(lpparam.classLoader,helper);
-        Testing.hook(lpparam.classLoader);
 
 
         if (shouldRunDescCopyFix) {
