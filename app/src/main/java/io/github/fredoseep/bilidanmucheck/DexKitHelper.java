@@ -59,6 +59,10 @@ public class DexKitHelper {
     public String VIP_PREDICT_REQUEST_CLASS_NAME = "retrofit2.h";
 
     public String NATIVE_WEBVIEW_SUB_CLASS_NAME = "com.bilibili.app.comm.bh.NativeWebView$d";
+    //NetworkShowToastService
+    public String NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME = "com.bilibili.ship.theseus.united.player.mediaplay.network.m";
+
+    public String NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME = "f";
     private static final String TAG = "dexkitHelper";
 
     // 开启测试模式，强制扫描并打印结果
@@ -117,6 +121,8 @@ public class DexKitHelper {
                     VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME = cacheProps.getProperty("VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME", VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME);
                     VIP_PREDICT_REQUEST_CLASS_NAME = cacheProps.getProperty("VIP_PREDICT_REQUEST_CLASS_NAME", VIP_PREDICT_REQUEST_CLASS_NAME);
                     NATIVE_WEBVIEW_SUB_CLASS_NAME = cacheProps.getProperty("NATIVE_WEBVIEW_SUB_CLASS_NAME", NATIVE_WEBVIEW_SUB_CLASS_NAME);
+                    NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME = cacheProps.getProperty("NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME", NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME);
+                    NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME = cacheProps.getProperty("NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME", NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME);
 
                     needScan = false;
                 }
@@ -434,6 +440,21 @@ public class DexKitHelper {
                         )
                 );
                 NATIVE_WEBVIEW_SUB_CLASS_NAME = nativeWebViewSubClassDataList.get(0).getName();
+                List<ClassData> networkShowToastServiceClassDataList = bridge.findClass(FindClass.create()
+                        .searchPackages("com.bilibili.ship.theseus.united.player.mediaplay.network")
+                        .matcher(ClassMatcher.create()
+                                .usingStrings("show cellular toast, app once: ",", already show: ")
+                        )
+                );
+                NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME = networkShowToastServiceClassDataList.get(0).getName();
+
+                List<MethodData> networkShowToastServiceMethodDataList = bridge.findMethod(FindMethod.create()
+                        .searchInClass(networkShowToastServiceClassDataList)
+                        .matcher(MethodMatcher.create()
+                                .usingStrings("NetworkShowToastService","not china sim user, skip free data guide toast")
+                        )
+                );
+                NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME = networkShowToastServiceMethodDataList.get(0).getMethodName();
 
                 cacheProps.setProperty("apk_last_modified", String.valueOf(currentApkTime));
                 cacheProps.setProperty("module_last_modified", String.valueOf(currentModuleTime));
@@ -463,6 +484,9 @@ public class DexKitHelper {
                 cacheProps.setProperty("VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME", VIP_OPEN_MEMBERSHIP_PREDICT_SCORE_METHOD_NAME);
                 cacheProps.setProperty("VIP_PREDICT_REQUEST_CLASS_NAME", VIP_PREDICT_REQUEST_CLASS_NAME);
                 cacheProps.setProperty("NATIVE_WEBVIEW_SUB_CLASS_NAME", NATIVE_WEBVIEW_SUB_CLASS_NAME);
+                cacheProps.setProperty("NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME", NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME);
+                cacheProps.setProperty("NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME", NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME);
+
 
                 cacheFile.getParentFile().mkdirs();
                 try (FileOutputStream fos = new FileOutputStream(cacheFile)) {
