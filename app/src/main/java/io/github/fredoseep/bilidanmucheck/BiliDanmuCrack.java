@@ -72,7 +72,12 @@ public class BiliDanmuCrack {
 
     // 核心修改：改为返回 List<String> 局部变量，防止状态污染
     public static List<String> crack(String input) {
+        java.util.LinkedHashSet<String> resultSet = new java.util.LinkedHashSet<>();
         List<String> resultList = new ArrayList<>();
+        if (input == null || !input.trim().matches("(?i)[0-9a-f]{1,8}")) {
+            return resultList;
+        }
+        input = input.trim();
         long ht;
         try {
             ht = Long.parseLong(input, 16) ^ 0xFFFFFFFFL;
@@ -84,10 +89,20 @@ public class BiliDanmuCrack {
         int[] index = new int[4];
         for (int i = 3; i >= 0; i--) {
             index[3 - i] = getcrcindex(ht >>> (i * 8));
+            if (index[3 - i] < 0) {
+                return resultList;
+            }
             long snum = crctable[index[3 - i]];
             ht ^= (snum >>> ((3 - i) * 8));
         }
 
+        // The reverse-prefix algorithm appends three digits, so check shorter UIDs separately.
+        for (int uid = 1; uid <= 999; uid++) {
+            String candidate = String.valueOf(uid);
+            if (matches(candidate, input)) {
+                resultSet.add(candidate);
+            }
+        }
         byte[] bytes = new byte[10];
 
         for (int i = 0; i < 100000000; i++) {
@@ -115,10 +130,27 @@ public class BiliDanmuCrack {
             if (lastindex == index[3]) {
                 String deepCheckData = deepCheck(bytes, len, index);
                 if (deepCheckData != null) {
-                    resultList.add(i + deepCheckData);
+                    String candidate = i + deepCheckData;
+                    if (candidate.charAt(0) != '0' && matches(candidate, input)) {
+                        resultSet.add(candidate);
+                    }
                 }
             }
         }
+        resultList.addAll(resultSet);
         return resultList;
+    }
+
+    public static boolean matches(String uid, String hash) {
+        if (uid == null || hash == null || !uid.matches("[1-9][0-9]*")) {
+            return false;
+        }
+        try {
+            java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+            crc.update(uid.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            return crc.getValue() == Long.parseLong(hash, 16);
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

@@ -3,6 +3,18 @@ plugins {
 }
 
 android {
+
+    flavorDimensions "edition"
+
+    productFlavors {
+        community {
+            dimension "edition"
+        }
+        personal {
+            dimension "edition"
+        }
+    }
+
     namespace 'io.github.fredoseep.bilidanmucheck'
     compileSdk {
         version = release(36)
@@ -12,8 +24,8 @@ android {
         applicationId "io.github.fredoseep.bilidanmucheck"
         minSdk 26
         targetSdk 36
-        versionCode 3
-        versionName "5.1"
+        versionCode 4
+        versionName "5.2"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
