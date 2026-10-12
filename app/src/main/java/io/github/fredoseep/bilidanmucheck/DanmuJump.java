@@ -52,6 +52,62 @@ public class DanmuJump {
         }
     }
 
+    private static volatile java.io.File voteLogDirectory;
+    private static final java.util.concurrent.ExecutorService voteLogWriter =
+            java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "DanmuVoteLogWriter");
+                thread.setDaemon(true);
+                return thread;
+            });
+
+    /** 每次提示一条摘要，每张有效票一条记录；磁盘写入不占用播放器线程。 */
+    private static void appendVoteLog(String jsonText) {
+        final java.io.File directory = voteLogDirectory;
+        final long receivedAt = System.currentTimeMillis();
+        if (directory == null) {
+            Log.d(TAG, "[DanmuVoteLog] directory not ready");
+            return;
+        }
+        voteLogWriter.execute(() -> {
+            try {
+                org.json.JSONObject record = new org.json.JSONObject(jsonText);
+                record.put("loggedAtMs", receivedAt);
+                java.text.SimpleDateFormat timestamp = new java.text.SimpleDateFormat(
+                        "yyyy-MM-dd HH:mm:ss.SSS Z", java.util.Locale.ROOT);
+                record.put("loggedAt", timestamp.format(new java.util.Date(receivedAt)));
+                for (String key : new String[]{"appearanceMs", "targetMs", "currentMs"}) {
+                    if (record.has(key) && !record.isNull(key)) {
+                        record.put(key.replace("Ms", "Time"),
+                                formatVideoTime(record.getLong(key)));
+                    }
+                }
+                long sentAtSeconds = record.optLong("sentAtSeconds", 0L);
+                if (sentAtSeconds > 0 && sentAtSeconds <= Long.MAX_VALUE / 1000L) {
+                    record.put("sentAt", timestamp.format(new java.util.Date(sentAtSeconds * 1000L)));
+                }
+                if (!directory.isDirectory() && !directory.mkdirs()) {
+                    throw new java.io.IOException("Cannot create vote log directory");
+                }
+                String day = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT)
+                        .format(new java.util.Date(receivedAt));
+                java.io.File file = new java.io.File(directory, "votes-" + day + ".jsonl");
+                byte[] bytes = (record.toString() + "\n")
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                try (java.io.FileOutputStream output = new java.io.FileOutputStream(file, true)) {
+                    output.write(bytes);
+                }
+            } catch (Throwable t) {
+                Log.d(TAG, "[DanmuVoteLog] write failed: " + t.getClass().getName());
+            }
+        });
+    }
+
+    private static String formatVideoTime(long milliseconds) {
+        return String.format(java.util.Locale.ROOT, "%02d:%02d:%02d.%03d",
+                milliseconds / 3600000L, (milliseconds / 60000L) % 60L,
+                (milliseconds / 1000L) % 60L, milliseconds % 1000L);
+    }
+
     public static void hook(ClassLoader classLoader) {
         installChronosProbe(classLoader);
 //        try {
@@ -132,6 +188,10 @@ public class DanmuJump {
                                 java.io.File source = (java.io.File) param.args[1];
                                 android.content.Context context =
                                         (android.content.Context) param.args[0];
+                                if (voteLogDirectory == null && context != null) {
+                                    voteLogDirectory = new java.io.File(context.getFilesDir(), "danmu_jump_logs");
+                                    Log.d(TAG, "[DanmuVoteLog] directory=" + voteLogDirectory.getAbsolutePath());
+                                }
                                 java.io.File patched = buildTracePackage(context, source);
                                 if (patched != null) {
                                     param.args[1] = patched;
@@ -212,6 +272,11 @@ public class DanmuJump {
                                     if ("log".equals(method.getName())
                                             && args != null && args.length == 1) {
                                         String message = String.valueOf(args[0]);
+                                        int voteIndex = message.indexOf("[DanmuJumpVote]");
+                                        if (voteIndex >= 0) {
+                                            appendVoteLog(message.substring(
+                                                    voteIndex + "[DanmuJumpVote]".length()));
+                                        }
                                         int senderIndex = message.indexOf("[DanmuSenderData]");
                                         if (senderIndex >= 0) {
                                             DanmuSenderLookup.cacheClientDanmaku(message.substring(
@@ -665,10 +730,10 @@ public class DanmuJump {
     }
 
     private static String adPromptScript() {
-        return "const __dj={context:null,activity:null,previous:null,store:new Map(),prompt:null,\n key(){const w=this.context&&this.context.workinfoManager.workInfo;return w?String(w.workId)+'/'+String(w.videoId):'';},\n bucket(key){let b=this.store.get(key);if(!b){b={rows:new Map(),targets:new Set(),blocks:[]};this.store.set(key,b);if(this.store.size>8)this.store.delete(this.store.keys().next().value);}return b;},\n close(){if(this.prompt&&!this.prompt.isReleased())this.prompt.release();this.prompt=null;},\n add(args){if(!args||!Array.isArray(args.rows))return;const b=this.bucket(String(args.workId)+'/'+String(args.videoId));for(const row of args.rows){if(Number.isFinite(row.appearanceMs)&&Number.isFinite(row.targetMs)&&row.targetMs>row.appearanceMs)b.rows.set(String(row.id)+'/'+row.targetMs,row);}cron.log('[DanmuJumpJS] candidates received count='+args.rows.length);},\n bind(context,activity){this.context=context;this.activity=activity;context.videoPlayer.addListener({onTimeUpdated:sec=>this.tick(sec),onSeeking:()=>{this.close();this.previous=null;},onSeeked:()=>{this.close();this.previous=null;}});context.workinfoManager.addListener({onWorkWillChange:()=>{this.close();this.previous=null;},onCurrentWorkChanged:()=>{this.close();this.previous=null;}});cron.log('[DanmuJumpJS] prompt pipeline ready');},\n tick(sec){if(!__DJ_CONFIG.enabled||!Number.isFinite(sec))return;const now=sec*1000;if(this.previous!==null&&now>=this.previous&&now-this.previous<200)return;const previous=this.previous;this.previous=now;if(this.context.videoPlayer.playbackRate<=0)return;if(previous!==null&&(now<previous||now-previous>2000)){this.close();return;}if(this.prompt&&!this.prompt.isReleased())return;this.prompt=null;const info=this.context.workinfoManager.workInfo,duration=Number(info.duration),key=this.key(),b=this.store.get(key);if(!b||!Number.isFinite(duration)||duration<=0)return;\n const tolerance=(__DJ_CONFIG.targetToleranceSeconds||5)*1000,sourceWindow=(__DJ_CONFIG.sourceWindowSeconds||30)*1000,minVotes=__DJ_CONFIG.minVotes||3;\n const eligible=Array.from(b.rows.values()).filter(row=>row.targetMs<duration&&row.targetMs>now+1000&&!Array.from(b.targets).some(target=>Math.abs(target-row.targetMs)<=tolerance)&&!b.blocks.some(range=>row.appearanceMs>=range[0]&&row.appearanceMs<=range[1]));\n let best=null;for(const anchor of eligible){if(anchor.appearanceMs>now||anchor.appearanceMs<now-1000||(previous!==null&&anchor.appearanceMs<previous))continue;const votes=new Map();for(const row of eligible){if(Math.abs(row.targetMs-anchor.targetMs)>tolerance||Math.abs(row.appearanceMs-anchor.appearanceMs)>sourceWindow)continue;const old=votes.get(row.id);if(!old||(!old.explicit&&row.explicit))votes.set(row.id,row);}if(votes.size<minVotes)continue;const members=Array.from(votes.values()),values=members.map(row=>row.targetMs).sort((a,b)=>a-b),target=values[Math.floor(values.length/2)],agree=members.filter(row=>Math.abs(row.targetMs-target)<=tolerance),explicitVotes=agree.filter(row=>row.explicit).length;if(agree.length<minVotes)continue;\n const group={id:anchor.id,appearanceMs:anchor.appearanceMs,targetMs:target,votes:agree.length,explicitVotes:explicitVotes};if(!best||group.votes>best.votes||(group.votes===best.votes&&group.explicitVotes>best.explicitVotes))best=group;}if(!best)return;\n const controller=this.activity.fetchLayouter('airborne');if(!controller)return;if(controller._airborneToast&&!controller._airborneToast.isReleased())return;\n b.targets.add(best.targetMs);const prompt=new wS(controller.size,controller._suggestedFactor,'检测到广告，点击跳转');this.prompt=prompt;controller._airborneToast=prompt;\n prompt.onClick=()=>{this.prompt=null;const current=this.context.videoPlayer.currentTime*1000,newDuration=Number(this.context.workinfoManager.workInfo.duration);if(this.key()!==key||best.targetMs<=current+1000||!Number.isFinite(newDuration)||best.targetMs>=newDuration){cron.log('[DanmuJumpJS] prompt click rejected: context or target changed');return true;}b.blocks.push([Math.max(0,current-1000),best.targetMs]);controller.__danmuJump(best.targetMs/1000);return true;};controller.view.addSubView(prompt);prompt.show();cron.log('[DanmuJumpJS] prompt shown '+JSON.stringify({videoId:String(info.videoId),id:best.id,appearanceMs:best.appearanceMs,targetMs:best.targetMs,currentMs:now,durationMs:duration,votes:best.votes,explicitVotes:best.explicitVotes}));}\n};\nEs.setMessageHandler('DanmuJump_AddCandidates',request=>{__dj.add(request.args);return new pt({accepted:true});});\n";
+        return "const __dj={context:null,activity:null,previous:null,store:new Map(),prompt:null,logSequence:0,\n key(){const w=this.context&&this.context.workinfoManager.workInfo;return w?String(w.workId)+'/'+String(w.videoId):'';},\n bucket(key){let b=this.store.get(key);if(!b){b={rows:new Map(),targets:new Set(),blocks:[]};this.store.set(key,b);if(this.store.size>8)this.store.delete(this.store.keys().next().value);}return b;},\n close(){if(this.prompt&&!this.prompt.isReleased())this.prompt.release();this.prompt=null;},\n add(args){if(!args||!Array.isArray(args.rows))return;const b=this.bucket(String(args.workId)+'/'+String(args.videoId));for(const row of args.rows){if(Number.isFinite(row.appearanceMs)&&Number.isFinite(row.targetMs)&&row.targetMs>row.appearanceMs)b.rows.set(String(row.id)+'/'+row.targetMs,row);}cron.log('[DanmuJumpJS] candidates received count='+args.rows.length);},\n bind(context,activity){this.context=context;this.activity=activity;context.videoPlayer.addListener({onTimeUpdated:sec=>this.tick(sec),onSeeking:()=>{this.close();this.previous=null;},onSeeked:()=>{this.close();this.previous=null;}});context.workinfoManager.addListener({onWorkWillChange:()=>{this.close();this.previous=null;},onCurrentWorkChanged:()=>{this.close();this.previous=null;}});cron.log('[DanmuJumpJS] prompt pipeline ready');},\n audit(group,info,now,duration){try{const batchId=String(Date.now())+'-'+String(++this.logSequence)+'-'+this.key(),emit=record=>cron.log('[DanmuJumpVote]'+JSON.stringify(record));emit({event:'prompt',batchId:batchId,workId:String(info.workId),videoId:String(info.videoId),id:group.id,currentMs:now,durationMs:duration,targetMs:group.targetMs,votes:group.votes,explicitVotes:group.explicitVotes,minVotes:__DJ_CONFIG.minVotes||3,targetToleranceSeconds:__DJ_CONFIG.targetToleranceSeconds||5,sourceWindowSeconds:__DJ_CONFIG.sourceWindowSeconds||30});for(let index=0;index<group.voters.length;index++){const row=group.voters[index];emit({event:'vote',batchId:batchId,workId:String(info.workId),videoId:String(info.videoId),voteIndex:index+1,id:row.id,dmid:row.dmid,text:row.text,sentAtSeconds:row.sentAtSeconds,appearanceMs:row.appearanceMs,targetMs:row.targetMs,format:row.format,explicit:row.explicit});}}catch(error){cron.log('[DanmuJumpJS] vote audit error '+String(error));}},\n tick(sec){if(!__DJ_CONFIG.enabled||!Number.isFinite(sec))return;const now=sec*1000;if(this.previous!==null&&now>=this.previous&&now-this.previous<200)return;const previous=this.previous;this.previous=now;if(this.context.videoPlayer.playbackRate<=0)return;if(previous!==null&&(now<previous||now-previous>2000)){this.close();return;}if(this.prompt&&!this.prompt.isReleased())return;this.prompt=null;const info=this.context.workinfoManager.workInfo,duration=Number(info.duration),key=this.key(),b=this.store.get(key);if(!b||!Number.isFinite(duration)||duration<=0)return;\n const tolerance=(__DJ_CONFIG.targetToleranceSeconds||5)*1000,sourceWindow=(__DJ_CONFIG.sourceWindowSeconds||30)*1000,minVotes=__DJ_CONFIG.minVotes||3;\n const eligible=Array.from(b.rows.values()).filter(row=>row.targetMs<duration&&row.targetMs>now+1000&&!Array.from(b.targets).some(target=>Math.abs(target-row.targetMs)<=tolerance)&&!b.blocks.some(range=>row.appearanceMs>=range[0]&&row.appearanceMs<=range[1]));\n let best=null;for(const anchor of eligible){if(anchor.appearanceMs>now||anchor.appearanceMs<now-1000||(previous!==null&&anchor.appearanceMs<previous))continue;const votes=new Map();for(const row of eligible){if(Math.abs(row.targetMs-anchor.targetMs)>tolerance||Math.abs(row.appearanceMs-anchor.appearanceMs)>sourceWindow)continue;const old=votes.get(row.id);if(!old||(!old.explicit&&row.explicit))votes.set(row.id,row);}if(votes.size<minVotes)continue;const members=Array.from(votes.values()),values=members.map(row=>row.targetMs).sort((a,b)=>a-b),target=values[Math.floor(values.length/2)],agree=members.filter(row=>Math.abs(row.targetMs-target)<=tolerance),explicitVotes=agree.filter(row=>row.explicit).length;if(agree.length<minVotes)continue;\n const group={id:anchor.id,appearanceMs:anchor.appearanceMs,targetMs:target,votes:agree.length,explicitVotes:explicitVotes,voters:agree};if(!best||group.votes>best.votes||(group.votes===best.votes&&group.explicitVotes>best.explicitVotes))best=group;}if(!best)return;\n const controller=this.activity.fetchLayouter('airborne');if(!controller)return;if(controller._airborneToast&&!controller._airborneToast.isReleased())return;\n b.targets.add(best.targetMs);const prompt=new wS(controller.size,controller._suggestedFactor,'检测到广告，点击跳转');this.prompt=prompt;controller._airborneToast=prompt;\n prompt.onClick=()=>{this.prompt=null;const current=this.context.videoPlayer.currentTime*1000,newDuration=Number(this.context.workinfoManager.workInfo.duration);if(this.key()!==key||best.targetMs<=current+1000||!Number.isFinite(newDuration)||best.targetMs>=newDuration){cron.log('[DanmuJumpJS] prompt click rejected: context or target changed');return true;}b.blocks.push([Math.max(0,current-1000),best.targetMs]);controller.__danmuJump(best.targetMs/1000);return true;};controller.view.addSubView(prompt);prompt.show();this.audit(best,info,now,duration);cron.log('[DanmuJumpJS] prompt shown '+JSON.stringify({videoId:String(info.videoId),id:best.id,appearanceMs:best.appearanceMs,targetMs:best.targetMs,currentMs:now,durationMs:duration,votes:best.votes,explicitVotes:best.explicitVotes}));}\n};\nEs.setMessageHandler('DanmuJump_AddCandidates',request=>{__dj.add(request.args);return new pt({accepted:true});});\n";
     }
 
     private static String candidateWorkerScript() {
-        return "try{const senders=[];for(const row of h.elems||[]){const id=String(row.idStr||row.id||''),hash=String(row.midHash||'');if(!id||!/^[0-9a-f]{1,8}$/i.test(hash))continue;senders.push({id:id,hash:hash});if(senders.length>=128)cron.log('[DanmuSenderData]'+JSON.stringify({videoId:String(i),rows:senders.splice(0)}));}if(senders.length)cron.log('[DanmuSenderData]'+JSON.stringify({videoId:String(i),rows:senders}));cron.log('[DanmuJumpJS] sender segment cached videoId='+String(i)+' total='+(h.elems||[]).length);}catch(error){cron.log('[DanmuJumpJS] sender cache error '+String(error));}\ntry{\n const rows=h.elems||[],selected=[];let numeric=0,accepted=0;\n if(__DJ_CONFIG.enabled)for(const row of rows){const text=String(row.content||''),times=globalThis.__danmuJumpParseTimes(text),appearance=Number(row.progress);if(times.length)numeric++;if(!Number.isFinite(appearance)||appearance<0)continue;for(const parsed of times){if(parsed.targetMs<=appearance)continue;accepted++;selected.push({id:String(row.idStr||row.id||'')+'@'+appearance,appearanceMs:appearance,targetMs:parsed.targetMs,explicit:parsed.explicit,format:parsed.format});if(selected.length>=100)cron.log('[DanmuJumpData]'+JSON.stringify({workId:String(s),videoId:String(i),rows:selected.splice(0)}));}}\n if(selected.length)cron.log('[DanmuJumpData]'+JSON.stringify({workId:String(s),videoId:String(i),rows:selected}));\n cron.log('[DanmuJumpJS] segment '+JSON.stringify({workId:String(s),videoId:String(i),segmentIndex:t.index,total:rows.length,numericDanmaku:numeric,forwardCandidates:accepted}));\n}catch(error){cron.log('[DanmuJumpJS] candidate pipeline error '+String(error));}\n";
+        return "try{const senders=[];for(const row of h.elems||[]){const id=String(row.idStr||row.id||''),hash=String(row.midHash||'');if(!id||!/^[0-9a-f]{1,8}$/i.test(hash))continue;senders.push({id:id,hash:hash});if(senders.length>=128)cron.log('[DanmuSenderData]'+JSON.stringify({videoId:String(i),rows:senders.splice(0)}));}if(senders.length)cron.log('[DanmuSenderData]'+JSON.stringify({videoId:String(i),rows:senders}));cron.log('[DanmuJumpJS] sender segment cached videoId='+String(i)+' total='+(h.elems||[]).length);}catch(error){cron.log('[DanmuJumpJS] sender cache error '+String(error));}\ntry{\n const rows=h.elems||[],selected=[];let numeric=0,accepted=0;\n if(__DJ_CONFIG.enabled)for(const row of rows){const text=String(row.content||''),times=globalThis.__danmuJumpParseTimes(text),appearance=Number(row.progress);if(times.length)numeric++;if(!Number.isFinite(appearance)||appearance<0)continue;for(const parsed of times){if(parsed.targetMs<=appearance)continue;accepted++;selected.push({id:String(row.idStr||row.id||'')+'@'+appearance,dmid:String(row.idStr||row.id||''),text:text,sentAtSeconds:Number(row.ctime)||null,appearanceMs:appearance,targetMs:parsed.targetMs,explicit:parsed.explicit,format:parsed.format});if(selected.length>=100)cron.log('[DanmuJumpData]'+JSON.stringify({workId:String(s),videoId:String(i),rows:selected.splice(0)}));}}\n if(selected.length)cron.log('[DanmuJumpData]'+JSON.stringify({workId:String(s),videoId:String(i),rows:selected}));\n cron.log('[DanmuJumpJS] segment '+JSON.stringify({workId:String(s),videoId:String(i),segmentIndex:t.index,total:rows.length,numericDanmaku:numeric,forwardCandidates:accepted}));\n}catch(error){cron.log('[DanmuJumpJS] candidate pipeline error '+String(error));}\n";
     }
 }
