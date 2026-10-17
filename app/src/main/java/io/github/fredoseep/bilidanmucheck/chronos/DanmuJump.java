@@ -1,4 +1,4 @@
-package io.github.fredoseep.bilidanmucheck;
+package io.github.fredoseep.bilidanmucheck.chronos;
 
 import android.util.Log;
 
@@ -6,6 +6,7 @@ import android.util.Log;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
+import io.github.fredoseep.bilidanmucheck.DanmuSenderLookup;
 
 public class DanmuJump {
     private static final String TAG = "DanmuJump";
@@ -15,33 +16,6 @@ public class DanmuJump {
             new java.util.concurrent.atomic.AtomicBoolean();
     private static volatile java.lang.ref.WeakReference<Object> activeEngine =
             new java.lang.ref.WeakReference<>(null);
-
-    private static final java.util.concurrent.atomic.AtomicBoolean scriptMismatchNotified =
-            new java.util.concurrent.atomic.AtomicBoolean();
-
-    private static void notifyScriptMismatch(android.content.Context context,
-                                             DanmuScriptPatcher.ScriptMismatchException error) {
-        Log.d(TAG, "[ChronosPatch] JS incompatible: " + error.getMessage());
-        if (context == null || !scriptMismatchNotified.compareAndSet(false, true)) return;
-        try {
-            android.content.Context appContext = context.getApplicationContext();
-            final android.content.Context toastContext = appContext != null ? appContext : context;
-            boolean posted = new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
-                try {
-                    android.widget.Toast.makeText(toastContext,
-                            "弹幕脚本版本不匹配，广告跳转和发送者查询暂不可用，请更新模块",
-                            android.widget.Toast.LENGTH_LONG).show();
-                } catch (Throwable t) {
-                    scriptMismatchNotified.set(false);
-                    Log.d(TAG, "[ChronosPatch] mismatch toast failed: " + t.getClass().getName());
-                }
-            });
-            if (!posted) scriptMismatchNotified.set(false);
-        } catch (Throwable t) {
-            scriptMismatchNotified.set(false);
-            Log.d(TAG, "[ChronosPatch] mismatch toast scheduling failed: " + t.getClass().getName());
-        }
-    }
 
     private static volatile java.io.File voteLogDirectory;
     private static final java.util.concurrent.ExecutorService voteLogWriter =
@@ -100,6 +74,7 @@ public class DanmuJump {
     }
 
     public static void hook(ClassLoader classLoader) {
+        ChronosPackageOverride.install();
         installChronosProbe(classLoader);
         try{
             XposedHelpers.findAndHookMethod(
@@ -119,14 +94,24 @@ public class DanmuJump {
                                     voteLogDirectory = new java.io.File(context.getFilesDir(), "danmu_jump_logs");
                                     Log.d(TAG, "[DanmuVoteLog] directory=" + voteLogDirectory.getAbsolutePath());
                                 }
-                                java.io.File patched = buildTracePackage(context, source);
+                                param.setObjectExtra("dj_original", source);
+                                ChronosPackageOverride.Selection selection =
+                                        ChronosPackageOverride.select(context, source);
+                                param.setObjectExtra("dj_builtin", selection.builtin);
+                                if (selection.skipPatching) {
+                                    param.args[1] = selection.file;
+                                    Log.d(TAG, "[ChronosOverride] restored original, skip module patches");
+                                    return;
+                                }
+                                java.io.File patched = buildTracePackage(context, selection.file);
                                 if (patched != null) {
                                     param.args[1] = patched;
                                     Log.d(TAG, "[ChronosPatch] redirected="
                                             + patched.getAbsolutePath());
                                 }
                             } catch (DanmuScriptPatcher.ScriptMismatchException e) {
-                                notifyScriptMismatch((android.content.Context) param.args[0], e);
+                                ChronosPackageOverride.mismatch((android.content.Context) param.args[0],
+                                        (java.io.File) param.args[1], e);
                             } catch (Throwable t) {
                                 Log.d(TAG, "[ChronosPatch] error\n"
                                         + Log.getStackTraceString(t));
@@ -141,6 +126,13 @@ public class DanmuJump {
                                     + file.getAbsolutePath()
                                     + ", size=" + file.length());
 
+                            if (Boolean.TRUE.equals(param.getObjectExtra("dj_builtin"))
+                                    && (param.hasThrowable() || param.getResult() == null)) {
+                                ChronosPackageOverride.loadFailed((android.content.Context) param.args[0],
+                                        (java.io.File) param.getObjectExtra("dj_original"),
+                                        param.hasThrowable() ? param.getThrowable()
+                                                : new java.io.IOException("内置包创建结果为空"));
+                            }
                             if (param.hasThrowable()) {
                                 Log.d(TAG, "[ChronosPackage] error\n"
                                         + Log.getStackTraceString(param.getThrowable()));

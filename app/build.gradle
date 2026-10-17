@@ -24,8 +24,8 @@ android {
         applicationId "io.github.fredoseep.bilidanmucheck"
         minSdk 26
         targetSdk 36
-        versionCode 7
-        versionName "6.2"
+        versionCode 9
+        versionName "7.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
