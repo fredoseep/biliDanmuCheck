@@ -46,6 +46,24 @@ public final class ChronosPackageOverride {
     private static boolean prompted;
     private static boolean dialogShowing;
     private static boolean recoveryPrompted;
+    private static volatile Boolean moduleDebug;
+
+    /** 检查模块 APK 的标志，不能使用宿主 B站的 debuggable 标志。无需开启 BuildConfig。 */
+    static boolean isDebugBuild(Context context) {
+        Boolean cached = moduleDebug;
+        if (cached != null) return cached;
+        try {
+            boolean debug = (context.getPackageManager().getApplicationInfo(
+                    "io.github.fredoseep.bilidanmucheck", 0).flags
+                    & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+            moduleDebug = debug;
+            Log.d(TAG, "[ChronosOverride] moduleBuild=" + (debug ? "debug" : "release"));
+            return debug;
+        } catch (Exception error) {
+            Log.d(TAG, "[ChronosOverride] cannot determine module build: " + error);
+            return false;
+        }
+    }
 
     static final class Selection {
         final File file;
@@ -62,17 +80,25 @@ public final class ChronosPackageOverride {
         final String error;
         final boolean recovery;
         final boolean manual;
+        final boolean debug;
+        final String currentVersion;
         Pending(Context context, File original, String error, boolean recovery) {
             this(context, original, error, recovery, false);
         }
         Pending(Context context, File original, String error, boolean recovery, boolean manual) {
+            this(context, original, error, recovery, manual, packageVersion(original));
+        }
+        Pending(Context context, File original, String error, boolean recovery, boolean manual,
+                String currentVersion) {
             Context app = context.getApplicationContext();
             this.context = app == null ? context : app;
             this.original = original; this.error = error; this.recovery = recovery; this.manual = manual;
+            this.debug = isDebugBuild(context);
+            this.currentVersion = currentVersion;
         }
     }
 
-    static void install() {
+    static void install(ClassLoader classLoader) {
         if (!installed.compareAndSet(false, true)) return;
         try {
             XposedHelpers.findAndHookMethod(Activity.class, "onResume", new XC_MethodHook() {
@@ -89,6 +115,46 @@ public final class ChronosPackageOverride {
         } catch (Throwable error) {
             Log.d(TAG, "[ChronosOverride] lifecycle hook failed: " + error);
         }
+        try {
+            // 视频重进时宿主可能复用已创建的 ChronosPackage，不能只等创建包的 hook。
+            XposedHelpers.findAndHookMethod(
+                    "tv.danmaku.biliplayerv2.service.interact.biz.InteractLayerService",
+                    classLoader, "bindPlayerContainer", "tv.danmaku.biliplayerv2.PlayerContainer",
+                    new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                Context context = (Context) XposedHelpers.callMethod(param.args[0], "getContext");
+                                if (isDebugBuild(context)) checkDebugVideoEntry(context);
+                            } catch (Throwable error) {
+                                Log.d(TAG, "[ChronosOverride] video entry check failed: " + error);
+                            }
+                        }
+                    });
+        } catch (Throwable error) {
+            Log.d(TAG, "[ChronosOverride] video entry hook unavailable: " + error);
+        }
+    }
+
+    private static void checkDebugVideoEntry(Context context) {
+        Context app = context.getApplicationContext();
+        final Context host = app == null ? context : app;
+        IO.execute(() -> {
+            try {
+                JSONObject state = readState(host);
+                File original = findOriginal(host, state);
+                if (original == null) return; // 首次载入由 createPackageFromFile 检查。
+                File current = BUILTIN.equals(state.optString("mode", AUTO))
+                        ? new File(host.getFilesDir(), "danmu_package_override/bundled-3.12.0.zip")
+                        : original;
+                try {
+                    DanmuScriptPatcher.checkCompatibility(host, current);
+                } catch (DanmuScriptPatcher.ScriptMismatchException error) {
+                    mismatch(host, original, current, error);
+                }
+            } catch (Exception error) {
+                Log.d(TAG, "[ChronosOverride] debug video compatibility check failed: " + error);
+            }
+        });
     }
 
     static Selection select(Context context, File original) throws Exception {
@@ -119,8 +185,14 @@ public final class ChronosPackageOverride {
     }
 
     static void mismatch(Context context, File original, Throwable error) {
+        mismatch(context, original, original, error);
+    }
+
+    static void mismatch(Context context, File original, File current, Throwable error) {
         Log.d(TAG, "[ChronosPatch] JS incompatible: " + error.getMessage());
         if (context == null) return;
+        final boolean debug = isDebugBuild(context);
+        final String version = packageVersion(current);
         final Activity activity = activityOf(context);
         MAIN.post(() -> {
             if (activity != null && alive(activity)) resumed = new WeakReference<>(activity);
@@ -128,21 +200,23 @@ public final class ChronosPackageOverride {
             boolean recovery;
             try {
                 JSONObject state = readState(context);
-                if (!allowAutomaticPrompt(state)) return;
+                if (!allowAutomaticPrompt(state, debug)) return;
                 recovery = BUILTIN.equals(state.optString("mode", AUTO));
             } catch (Exception invalid) {
                 Log.d(TAG, "[ChronosOverride] prompt suppressed: unreadable state");
                 return;
             }
-            if (recovery ? recoveryPrompted : prompted) return;
-            pending = new Pending(context, original, String.valueOf(error.getMessage()), recovery);
+            if (!debug && (recovery ? recoveryPrompted : prompted)) return;
+            pending = new Pending(context, original, String.valueOf(error.getMessage()), recovery,
+                    false, version);
             showPending();
         });
     }
 
     static void loadFailed(Context context, File original, Throwable error) {
         Log.d(TAG, "[ChronosOverride] bundled load failed: " + error);
-        mismatch(context, original, error);
+        mismatch(context, original,
+                new File(context.getFilesDir(), "danmu_package_override/bundled-3.12.0.zip"), error);
     }
 
     private static void showPending() {
@@ -150,22 +224,25 @@ public final class ChronosPackageOverride {
         if (pending == null || dialogShowing || !alive(activity)) return;
         Pending request = pending;
         if (!request.manual) {
-            if (request.recovery ? recoveryPrompted : prompted) return;
+            if (!request.debug && (request.recovery ? recoveryPrompted : prompted)) return;
             try {
-                if (!allowAutomaticPrompt(readState(request.context))) { pending = null; return; }
+                if (!allowAutomaticPrompt(readState(request.context), request.debug)) { pending = null; return; }
             } catch (Exception invalid) { pending = null; return; }
         }
         android.view.View panel = warningPanel(activity,
                 request.recovery ? "内置弹幕包加载失败" : "使用模块内置弹幕包",
-                request.recovery
+                "当前 Chronos：" + request.currentVersion + "\n内置目标：3.12.0\n\n"
+                + (request.recovery
                         ? "内置包在当前客户端中未能正常加载，可恢复客户端原版弹幕包。"
                         : "是否用模块内置的 Chronos 3.12.0 替换加载？\n"
                           + "确认后先保存原包副本，再启用内置包。新旧客户端兼容性需要实际验证。\n"
-                          + "选择不替换后，今后启动不再自动询问；仍可从设置主动替换。",
+                          + (request.debug
+                                ? "Debug 模块：本次不替换后，下次进入视频检测到不适配仍会提示。"
+                                : "选择不替换后，今后启动不再自动询问；仍可从设置主动替换。")),
                 request.error);
         AlertDialog dialog = new AlertDialog.Builder(activity)
                 .setTitle(request.recovery ? "弹幕引擎异常" : "弹幕引擎替换确认")
-                .setView(panel).setNegativeButton("不替换，不再提示", null)
+                .setView(panel).setNegativeButton(request.debug ? "本次不替换" : "不替换，不再提示", null)
                 .setPositiveButton(request.recovery ? "恢复原版" : "备份并替换", null)
                 .create();
         dialog.setCanceledOnTouchOutside(false);
@@ -236,9 +313,9 @@ public final class ChronosPackageOverride {
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(enabled);
     }
 
-    private static boolean allowAutomaticPrompt(JSONObject state) {
-        return !ORIGINAL.equals(state.optString("mode", AUTO))
-                && !state.optBoolean("suppressMismatchPrompt", false);
+    private static boolean allowAutomaticPrompt(JSONObject state, boolean debug) {
+        return debug || (!ORIGINAL.equals(state.optString("mode", AUTO))
+                && !state.optBoolean("suppressMismatchPrompt", false));
     }
 
     private static synchronized void rememberDecline(Context context) throws Exception {
@@ -290,9 +367,13 @@ public final class ChronosPackageOverride {
                         : "invalid".equals(mode) ? "配置读取失败，可强制恢复原版"
                         : "自动适配客户端原包";
                 String description = "当前模式：" + label
+                        + "\n当前 Chronos：" + packageVersion(BUILTIN.equals(mode)
+                                ? new File(context.getFilesDir(), "danmu_package_override/bundled-3.12.0.zip") : original)
                         + (target ? "\n当前包已是目标包，不需要替换。" : original == null
                         ? "\n尚未识别当前包，请先打开一次视频。" : "\n当前原包可主动替换为内置 3.12.0。")
-                        + "\n自动替换提示：" + (allowAutomaticPrompt(state) ? "开启" : "已关闭，重启后保持")
+                        + "\n自动替换提示：" + (isDebugBuild(context)
+                                ? "Debug：每次检测到不适配均提示"
+                                : allowAutomaticPrompt(state, false) ? "开启" : "已关闭，重启后保持")
                         + "\n\n原包副本：" + state.optString("backup", "尚未创建")
                         + "\n\n恢复原版会停止使用内置包并停止修改弹幕脚本。恢复后请彻底重启 B站，副本不会删除。";
                 MAIN.post(() -> {
@@ -369,6 +450,30 @@ public final class ChronosPackageOverride {
             JSONObject info = new JSONObject(new String(output.toByteArray(), StandardCharsets.UTF_8));
             return SHA256.equals(hash(file)) || ("3.12.0".equals(info.optString("version"))
                     && "400ac5eae28407c896f2bbcdb6889b935e444da0".equals(info.optString("commit")));
+        }
+    }
+
+    private static String packageVersion(File file) {
+        if (file == null || !file.isFile()) return "未知（未找到包）";
+        try (ZipFile zip = new ZipFile(file)) {
+            java.util.zip.ZipEntry entry = zip.getEntry("info.json");
+            if (entry == null) return "未知（缺少 info.json）";
+            try (InputStream input = zip.getInputStream(entry)) {
+                java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+                byte[] buffer = new byte[4096]; int count;
+                while ((count = input.read(buffer)) != -1) {
+                    if (output.size() + count > 1024 * 1024) throw new IOException("Metadata too large");
+                    output.write(buffer, 0, count);
+                }
+                JSONObject info = new JSONObject(new String(output.toByteArray(), StandardCharsets.UTF_8));
+                String version = info.optString("version", "未知");
+                String commit = info.optString("commit", "");
+                return version + (commit.isEmpty() ? "" : "（commit "
+                        + commit.substring(0, Math.min(8, commit.length())) + "）");
+            }
+        } catch (Exception error) {
+            Log.d(TAG, "[ChronosOverride] read package version failed: " + error);
+            return "未知（读取失败）";
         }
     }
 

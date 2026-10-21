@@ -74,7 +74,7 @@ public class DanmuJump {
     }
 
     public static void hook(ClassLoader classLoader) {
-        ChronosPackageOverride.install();
+        ChronosPackageOverride.install(classLoader);
         installChronosProbe(classLoader);
         try{
             XposedHelpers.findAndHookMethod(
@@ -98,7 +98,17 @@ public class DanmuJump {
                                 ChronosPackageOverride.Selection selection =
                                         ChronosPackageOverride.select(context, source);
                                 param.setObjectExtra("dj_builtin", selection.builtin);
+                                param.setObjectExtra("dj_selected", selection.file);
                                 if (selection.skipPatching) {
+                                    if (ChronosPackageOverride.isDebugBuild(context)) {
+                                        try {
+                                            DanmuScriptPatcher.checkCompatibility(context, selection.file);
+                                        } catch (DanmuScriptPatcher.ScriptMismatchException mismatch) {
+                                            ChronosPackageOverride.mismatch(context, selection.file, mismatch);
+                                        } catch (Exception checkError) {
+                                            Log.d(TAG, "[ChronosOverride] debug compatibility check failed: " + checkError);
+                                        }
+                                    }
                                     param.args[1] = selection.file;
                                     Log.d(TAG, "[ChronosOverride] restored original, skip module patches");
                                     return;
@@ -111,7 +121,8 @@ public class DanmuJump {
                                 }
                             } catch (DanmuScriptPatcher.ScriptMismatchException e) {
                                 ChronosPackageOverride.mismatch((android.content.Context) param.args[0],
-                                        (java.io.File) param.args[1], e);
+                                        (java.io.File) param.getObjectExtra("dj_original"),
+                                        (java.io.File) param.getObjectExtra("dj_selected"), e);
                             } catch (Throwable t) {
                                 Log.d(TAG, "[ChronosPatch] error\n"
                                         + Log.getStackTraceString(t));

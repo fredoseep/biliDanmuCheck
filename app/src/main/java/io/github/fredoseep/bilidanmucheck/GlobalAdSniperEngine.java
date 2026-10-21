@@ -131,84 +131,173 @@ public class GlobalAdSniperEngine {
             Log.e(TAG, "Hook PegasusGsonParser.g 失败: " + e.getMessage());
         }
 
+        installSplashFilter(classLoader);
+    }
+
+    private static volatile boolean splashHookInstalled;
+    private static final java.util.concurrent.atomic.AtomicLong gsonCalls =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong splashMatches =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong splashRemoved =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.ArrayDeque<String> recentGson = new java.util.ArrayDeque<>();
+
+    private static void installSplashFilter(ClassLoader classLoader) {
         try {
             Class<?> gsonClass = XposedHelpers.findClass("com.google.gson.Gson", classLoader);
-
-            de.robv.android.xposed.XposedBridge.hookAllMethods(gsonClass, "fromJson", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (param.args == null || param.args.length < 2) return;
-
-                    Object inputArg = param.args[0];
-                    Object typeArg = param.args[1];
-
-                    if (typeArg == null) return;
-                    String typeName = typeArg.toString();
-
-                    // 只狙击目标类型包含 SplashListResponse 的反序列化请求
-                    if (typeName.contains("SplashListResponse")) {
-                        String jsonString = null;
-                        boolean isReader = false;
-
-                        // 1. 提取原始 JSON 字符串
-                        if (inputArg instanceof String) {
-                            jsonString = (String) inputArg;
-                        } else if (inputArg instanceof java.io.Reader) {
-                            isReader = true;
-                            java.io.Reader reader = (java.io.Reader) inputArg;
-
-                            // 注意：读取 Reader 会消耗掉流，必须完整读出
-                            StringBuilder sb = new StringBuilder();
-                            char[] buffer = new char[4096];
-                            int charsRead;
-                            while ((charsRead = reader.read(buffer)) != -1) {
-                                sb.append(buffer, 0, charsRead);
+            java.util.Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(
+                    gsonClass, "fromJson", new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam param) {
+                            gsonCalls.incrementAndGet();
+                            Object result = param.getResult();
+                            String target = param.args != null && param.args.length >= 2
+                                    ? String.valueOf(param.args[1]) : "<unknown>";
+                            String actual = result == null ? "null" : result.getClass().getName();
+                            String input = param.args != null && param.args.length > 0 && param.args[0] != null
+                                    ? param.args[0].getClass().getName() : "null";
+                            if (IS_TESTING) {
+                                synchronized (recentGson) {
+                                    if (recentGson.size() == 40) recentGson.removeFirst();
+                                    recentGson.addLast("thread=" + Thread.currentThread().getName()
+                                            + ", input=" + input + ", target=" + target
+                                            + ", result=" + actual + ", error=" + param.hasThrowable());
+                                }
                             }
-                            jsonString = sb.toString();
-                        }
-
-                        if (jsonString != null && jsonString.contains("\"list\"")) {
+                            // 不读取 Reader/JsonReader，也不消费响应流。所有 fromJson 重载统一处理结果。
+                            if (!target.contains("SplashListResponse")
+                                    && !actual.contains("SplashListResponse")) return;
+                            splashMatches.incrementAndGet();
+                            if (IS_TESTING) Log.d(TAG, "[SplashParse] input=" + input
+                                    + ", target=" + target + ", result=" + actual
+                                    + ", overload=" + param.method);
+                            if (param.hasThrowable() || result == null) return;
                             try {
-                                // 2. 使用自带的 JSONObject 强行清空广告数组
-                                org.json.JSONObject jsonObj = new org.json.JSONObject(jsonString);
-                                if (jsonObj.has("data")) {
-                                    org.json.JSONObject dataObj = jsonObj.getJSONObject("data");
-                                    if (dataObj.has("list")) {
-                                        org.json.JSONArray listArray = dataObj.getJSONArray("list");
-                                        int count = listArray.length();
+                                int count = clearSplashList(result);
+                                if (count > 0) {
+                                    splashRemoved.addAndGet(count);
+                                    Log.d(TAG, "[SplashFilter] cleared=" + count + ", result=" + actual);
+                                    if (IS_TESTING) Log.d(TAG, "[SplashParseStack]\n"
+                                            + Log.getStackTraceString(new Throwable("Splash parsed")));
+                                }
+                            } catch (Throwable error) {
+                                Log.d(TAG, "[SplashFilter] object filtering failed: "
+                                        + Log.getStackTraceString(error));
+                            }
+                        }
+                    });
+            splashHookInstalled = !hooks.isEmpty();
+            Log.d(TAG, "[SplashInstall] installed=" + splashHookInstalled + ", overloads=" + hooks.size()
+                    + ", loader=" + gsonClass.getClassLoader() + ", diagnostics=" + IS_TESTING);
+        } catch (Throwable error) {
+            Log.d(TAG, "[SplashInstall] failed: " + Log.getStackTraceString(error));
+        }
+    }
 
-                                        // 釜底抽薪：直接放一个空的 JSON 数组进去，秒杀所有开屏广告
-                                        dataObj.put("list", new org.json.JSONArray());
+    /** 仅处理已确认的 data.list / list，兼容字段混淆但保留 SerializedName 的情况。 */
+    private static int clearSplashList(Object response) throws Exception {
+        Object owner = response;
+        Field listField = findJsonField(owner.getClass(), "list");
+        if (listField == null) {
+            Field data = findJsonField(owner.getClass(), "data");
+            if (data != null) owner = data.get(owner);
+            if (owner == null) return 0;
+            listField = findJsonField(owner.getClass(), "list");
+        }
+        if (listField == null) {
+            if (IS_TESTING) {
+                Log.d(TAG, "[SplashShape] no list field, response=" + response.getClass().getName());
+                dumpFields("response", response);
+                if (owner != response) dumpFields("data", owner);
+            }
+            return 0;
+        }
+        Object value = listField.get(owner);
+        if (!(value instanceof java.util.List)) {
+            if (IS_TESTING) Log.d(TAG, "[SplashShape] list is "
+                    + (value == null ? "null" : value.getClass().getName()));
+            return 0;
+        }
+        java.util.List<?> list = (java.util.List<?>) value;
+        int count = list.size();
+        if (count == 0) return 0;
+        if (listField.getType().isAssignableFrom(ArrayList.class)) {
+            listField.set(owner, new ArrayList<>());
+        } else {
+            list.clear();
+        }
+        return count;
+    }
 
-                                        String newJson = jsonObj.toString();
-
-                                        // 3. 将洗净的 JSON 替换回入参
-                                        if (isReader) {
-                                            param.args[0] = new java.io.StringReader(newJson);
-                                        } else {
-                                            param.args[0] = newJson;
-                                        }
-
-                                        android.util.Log.d(TAG, "[SplashFilter] 🚀 成功通过文本拦截，清空了 " + count + " 个开屏/闪屏广告！");
+    private static Field findJsonField(Class<?> clazz, String jsonName) {
+        // 先检查注解，再检查 Java 字段名，避免短字段名混淆后的误命中。
+        for (int pass = 0; pass < 2; pass++) {
+            for (Class<?> current = clazz; current != null && current != Object.class;
+                 current = current.getSuperclass()) {
+                for (Field field : current.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) continue;
+                    boolean matches = pass == 1 && field.getName().equals(jsonName);
+                    if (pass == 0) {
+                        for (java.lang.annotation.Annotation annotation : field.getDeclaredAnnotations()) {
+                            if (!annotation.annotationType().getName().equals("com.google.gson.annotations.SerializedName")) continue;
+                            try {
+                                Object value = annotation.annotationType().getMethod("value").invoke(annotation);
+                                matches = jsonName.equals(value);
+                                if (!matches) {
+                                    Object alternate = annotation.annotationType().getMethod("alternate").invoke(annotation);
+                                    if (alternate instanceof String[]) {
+                                        for (String name : (String[]) alternate) if (jsonName.equals(name)) matches = true;
                                     }
                                 }
-                            } catch (Exception e) {
-                                // 容错：如果 JSON 解析失败，必须把原样读出来的字符串塞回去，否则流断裂会导致闪退
-                                if (isReader) {
-                                    param.args[0] = new java.io.StringReader(jsonString);
-                                }
-                                android.util.Log.e(TAG, "解析开屏广告 JSON 失败", e);
-                            }
-                        } else if (isReader && jsonString != null) {
-                            // 如果没匹配到，也必须把流还回去
-                            param.args[0] = new java.io.StringReader(jsonString);
+                            } catch (Exception ignored) { }
                         }
                     }
+                    if (matches) { field.setAccessible(true); return field; }
                 }
-            });
-            android.util.Log.d(TAG, "开屏广告文本级拦截器 (Gson.fromJson) 挂载成功！");
-        } catch (Throwable t) {
-            android.util.Log.e(TAG, "Hook Gson.fromJson 拦截开屏广告失败", t);
+            }
+        }
+        return null;
+    }
+
+    /** 由展示层兜底调用；仅 Debug 记录，不阻止原来的跳过逻辑。 */
+    public static void traceSplashFallback(Object splash) {
+        if (!IS_TESTING) return;
+        try {
+            Log.d(TAG, "[SplashFallback] installed=" + splashHookInstalled
+                    + ", gsonCalls=" + gsonCalls.get() + ", matches=" + splashMatches.get()
+                    + ", removed=" + splashRemoved.get()
+                    + ", splash=" + (splash == null ? "null" : splash.getClass().getName()));
+            Log.d(TAG, "[SplashFallbackStack]\n" + Log.getStackTraceString(new Throwable("Splash ready")));
+            List<String> snapshot;
+            synchronized (recentGson) { snapshot = new ArrayList<>(recentGson); }
+            for (String item : snapshot) Log.d(TAG, "[SplashRecentGson] " + item);
+            dumpFields("splash", splash);
+        } catch (Throwable error) {
+            Log.d(TAG, "[SplashFallback] probe failed: " + Log.getStackTraceString(error));
+        }
+    }
+
+    /** 只记录类型和集合大小；不输出广告正文、Cookie 或账号字段值。 */
+    private static void dumpFields(String label, Object instance) {
+        if (instance == null) return;
+        int logged = 0;
+        for (Class<?> current = instance.getClass(); current != null && current != Object.class;
+             current = current.getSuperclass()) {
+            for (Field field : current.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers()) || field.isSynthetic()) continue;
+                if (field.getType().isPrimitive() || field.getType() == String.class) continue;
+                if (++logged > 45) return;
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(instance);
+                    Log.d(TAG, "[SplashField] " + label + "." + current.getSimpleName() + "." + field.getName()
+                            + ": declared=" + field.getType().getName() + ", actual="
+                            + (value == null ? "null" : value.getClass().getName())
+                            + (value instanceof java.util.Collection ? ", size=" + ((java.util.Collection<?>) value).size() : ""));
+                } catch (Exception error) {
+                    Log.d(TAG, "[SplashField] " + label + "." + field.getName() + ": " + error.getClass().getSimpleName());
+                }
+            }
         }
     }
 

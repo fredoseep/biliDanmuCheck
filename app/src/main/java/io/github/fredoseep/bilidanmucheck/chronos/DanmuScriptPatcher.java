@@ -28,14 +28,10 @@ final class DanmuScriptPatcher {
 
     static Result patch(Context host, String main, String worker, JSONObject config) throws Exception {
         JSONObject manifest = new JSONObject(asset(host, "latest.json"));
+        validateAnchors(manifest, main, worker);
         // 先检查所有原始片段，再进行任何替换；每一处必须唯一命中。
         JSONArray patches = manifest.getJSONArray("mainPatches");
-        for (int i = 0; i < patches.length(); i++) {
-            JSONObject patch = patches.getJSONObject(i);
-            requireUnique(main, patch.getString("find"), patch.getString("name"));
-        }
         String workerAnchor = manifest.getString("workerAnchor");
-        requireUnique(worker, workerAnchor, "worker-decoder");
         String bridge = asset(host, "jump-bridge.js");
         String prompt = asset(host, "ad-prompt.js");
         String parser = asset(host, "time-parser.js");
@@ -56,6 +52,34 @@ final class DanmuScriptPatcher {
                 + manifest.getString("id") + "');}catch(error){}\n" + main;
         Log.d(TAG, "[ChronosPatch] adapter=" + manifest.getString("id"));
         return new Result(main, worker);
+    }
+
+    /** 回退模式下只检查兼容性，不生成或加载修改后的包。 */
+    static void checkCompatibility(Context host, java.io.File file) throws Exception {
+        try (ZipFile zip = new ZipFile(file)) {
+            String base = "res/src/danmaku/business/demand/entry_point/";
+            String main = script(zip, base + "index_main.js");
+            String worker = script(zip, base + "@cronc.worker.dfm_script.js");
+            validateAnchors(new JSONObject(asset(host, "latest.json")), main, worker);
+        }
+    }
+
+    private static String script(ZipFile zip, String path) throws Exception {
+        ZipEntry entry = zip.getEntry(path);
+        if (entry == null) throw new ScriptMismatchException("Script missing: " + path);
+        try (InputStream input = zip.getInputStream(entry)) {
+            return new String(read(input, 4 * 1024 * 1024), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static void validateAnchors(JSONObject manifest, String main, String worker)
+            throws Exception {
+        JSONArray patches = manifest.getJSONArray("mainPatches");
+        for (int i = 0; i < patches.length(); i++) {
+            JSONObject patch = patches.getJSONObject(i);
+            requireUnique(main, patch.getString("find"), patch.getString("name"));
+        }
+        requireUnique(worker, manifest.getString("workerAnchor"), "worker-decoder");
     }
 
     private static void requireUnique(String source, String anchor, String name)
