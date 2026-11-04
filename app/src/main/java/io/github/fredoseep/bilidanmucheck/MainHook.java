@@ -21,6 +21,7 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import io.github.fredoseep.bilidanmucheck.chronos.DanmuJump;
 import io.github.fredoseep.bilidanmucheck.settings.FollowingTopLeftButton;
+import io.github.fredoseep.bilidanmucheck.sniffer.IgHttpEngineHook;
 
 public class MainHook implements IXposedHookLoadPackage {
 
@@ -106,6 +107,9 @@ public class MainHook implements IXposedHookLoadPackage {
         InterfaceDumper.hook(lpparam.classLoader);
         FollowingListAdSniper.hook(lpparam.classLoader);
         FollowingTopLeftButton.hook(lpparam.classLoader);
+        if(BuildConfig.DEBUG) {
+            IgHttpEngineHook.hook(lpparam.classLoader);
+        }
 //        VipJsonTestHook.hook(lpparam.classLoader);
 //        EffectiveVipTesting.hook(lpparam.classLoader);
 

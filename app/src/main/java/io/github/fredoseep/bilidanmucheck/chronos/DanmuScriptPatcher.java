@@ -54,8 +54,36 @@ final class DanmuScriptPatcher {
         return new Result(main, worker);
     }
 
+    static final String DEMAND_MAIN =
+            "res/src/danmaku/business/demand/entry_point/index_main.js";
+    static final String DEMAND_WORKER =
+            "res/src/danmaku/business/demand/entry_point/@cronc.worker.dfm_script.js";
+
+    /** 同名引擎也用于直播。按业务身份识别，版本号只参与后续适配检查。 */
+    static boolean isDemandInfo(JSONObject info, boolean hasDemandScripts) {
+        if (!"danmaku-flame-master".equals(info.optString("name"))) return false;
+        String description = info.optString("description", "").trim().toLowerCase(java.util.Locale.ROOT);
+        if (description.contains("live")) return false;
+        return "bilibili-demand".equals(description) || hasDemandScripts;
+    }
+
+    static boolean isDemandPackage(java.io.File file) throws Exception {
+        if (file == null || !file.isFile()) return false;
+        try (ZipFile zip = new ZipFile(file)) {
+            ZipEntry entry = zip.getEntry("info.json");
+            if (entry == null) return false;
+            JSONObject info;
+            try (InputStream input = zip.getInputStream(entry)) {
+                info = new JSONObject(new String(read(input, 1024 * 1024), StandardCharsets.UTF_8));
+            }
+            return isDemandInfo(info, zip.getEntry(DEMAND_MAIN) != null
+                    && zip.getEntry(DEMAND_WORKER) != null);
+        }
+    }
+
     /** 回退模式下只检查兼容性，不生成或加载修改后的包。 */
     static void checkCompatibility(Context host, java.io.File file) throws Exception {
+        if (!isDemandPackage(file)) return;
         try (ZipFile zip = new ZipFile(file)) {
             String base = "res/src/danmaku/business/demand/entry_point/";
             String main = script(zip, base + "index_main.js");

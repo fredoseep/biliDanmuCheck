@@ -95,12 +95,14 @@ public class DanmuJump {
                                     Log.d(TAG, "[DanmuVoteLog] directory=" + voteLogDirectory.getAbsolutePath());
                                 }
                                 param.setObjectExtra("dj_original", source);
+                                param.setObjectExtra("dj_demand", DanmuScriptPatcher.isDemandPackage(source));
                                 ChronosPackageOverride.Selection selection =
                                         ChronosPackageOverride.select(context, source);
                                 param.setObjectExtra("dj_builtin", selection.builtin);
                                 param.setObjectExtra("dj_selected", selection.file);
                                 if (selection.skipPatching) {
-                                    if (ChronosPackageOverride.isDebugBuild(context)) {
+                                    if (Boolean.TRUE.equals(param.getObjectExtra("dj_demand"))
+                                            && ChronosPackageOverride.isDebugBuild(context)) {
                                         try {
                                             DanmuScriptPatcher.checkCompatibility(context, selection.file);
                                         } catch (DanmuScriptPatcher.ScriptMismatchException mismatch) {
@@ -110,7 +112,8 @@ public class DanmuJump {
                                         }
                                     }
                                     param.args[1] = selection.file;
-                                    Log.d(TAG, "[ChronosOverride] restored original, skip module patches");
+                                    Log.d(TAG, "[ChronosOverride] skip module patches, demand="
+                                            + param.getObjectExtra("dj_demand"));
                                     return;
                                 }
                                 java.io.File patched = buildTracePackage(context, selection.file);
@@ -157,6 +160,8 @@ public class DanmuJump {
                             }
 
                             try {
+                                XposedHelpers.setAdditionalInstanceField(pkg, "danmuJump.demandPackage",
+                                        Boolean.TRUE.equals(param.getObjectExtra("dj_demand")));
                                 Log.d(TAG, "[ChronosPackage] info="
                                         + XposedHelpers.callMethod(pkg, "getInfo"));
                                 Log.d(TAG, "[ChronosPackage] sandbox="
@@ -275,6 +280,8 @@ public class DanmuJump {
                                 return;
                             }
                             try {
+                                if (!Boolean.TRUE.equals(XposedHelpers.getAdditionalInstanceField(
+                                        pkg, "danmuJump.demandPackage"))) return;
                                 String info = (String) XposedHelpers.callMethod(pkg, "getInfo");
                                 if (info == null || !"danmaku-flame-master".equals(
                                         new org.json.JSONObject(info).optString("name"))) {
@@ -308,10 +315,8 @@ public class DanmuJump {
         }
     }
 
-    private static final String DM_WORKER_SCRIPT =
-            "res/src/danmaku/business/demand/entry_point/@cronc.worker.dfm_script.js";
-    private static final String MAIN_SCRIPT =
-            "res/src/danmaku/business/demand/entry_point/index_main.js";
+    private static final String DM_WORKER_SCRIPT = DanmuScriptPatcher.DEMAND_WORKER;
+    private static final String MAIN_SCRIPT = DanmuScriptPatcher.DEMAND_MAIN;
 
     /** Builds a temporary trace-only copy. Never edits the original cache package. */
     private static synchronized java.io.File buildTracePackage(
@@ -332,7 +337,8 @@ public class DanmuJump {
                         java.nio.charset.StandardCharsets.UTF_8);
             }
             org.json.JSONObject metadata = new org.json.JSONObject(info);
-            if (!"danmaku-flame-master".equals(metadata.optString("name"))) {
+            if (!DanmuScriptPatcher.isDemandInfo(metadata,
+                    zip.getEntry(MAIN_SCRIPT) != null && zip.getEntry(DM_WORKER_SCRIPT) != null)) {
                 return null;
             }
             org.json.JSONObject config = loadRules(context);

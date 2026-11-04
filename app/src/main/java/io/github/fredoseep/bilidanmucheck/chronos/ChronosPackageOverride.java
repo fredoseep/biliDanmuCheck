@@ -158,7 +158,10 @@ public final class ChronosPackageOverride {
     }
 
     static Selection select(Context context, File original) throws Exception {
-        if (!isDanmaku(original)) return new Selection(original, false, false);
+        if (!isDanmaku(original)) {
+            Log.d(TAG, "[ChronosScope] skip non-demand package: " + packageVersion(original));
+            return new Selection(original, true, false);
+        }
         synchronized (ChronosPackageOverride.class) {
             JSONObject state = readState(context);
             boolean target = isTargetPackage(original);
@@ -189,8 +192,17 @@ public final class ChronosPackageOverride {
     }
 
     static void mismatch(Context context, File original, File current, Throwable error) {
-        Log.d(TAG, "[ChronosPatch] JS incompatible: " + error.getMessage());
         if (context == null) return;
+        try {
+            if (!isDanmaku(original) && !isDanmaku(current)) {
+                Log.d(TAG, "[ChronosScope] ignore mismatch outside demand playback");
+                return;
+            }
+        } catch (Exception scopeError) {
+            Log.d(TAG, "[ChronosScope] cannot identify demand package, skip prompt: " + scopeError);
+            return;
+        }
+        Log.d(TAG, "[ChronosPatch] JS incompatible: " + error.getMessage());
         final boolean debug = isDebugBuild(context);
         final String version = packageVersion(current);
         final Activity activity = activityOf(context);
@@ -559,21 +571,7 @@ public final class ChronosPackageOverride {
     }
 
     private static boolean isDanmaku(File file) throws Exception {
-        if (file == null || !file.isFile()) return false;
-        try (ZipFile zip = new ZipFile(file)) {
-            java.util.zip.ZipEntry info = zip.getEntry("info.json");
-            if (info == null) return false;
-            try (InputStream input = zip.getInputStream(info)) {
-                java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
-                byte[] buffer = new byte[4096]; int length;
-                while ((length = input.read(buffer)) != -1) {
-                    if (output.size() + length > 1024 * 1024) throw new IOException("Metadata too large");
-                    output.write(buffer, 0, length);
-                }
-                return "danmaku-flame-master".equals(new JSONObject(
-                        new String(output.toByteArray(), StandardCharsets.UTF_8)).optString("name"));
-            }
-        }
+        return DanmuScriptPatcher.isDemandPackage(file);
     }
 
     private static File directory(Context context) throws IOException {
