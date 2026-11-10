@@ -17,6 +17,7 @@ import org.luckypray.dexkit.result.MethodData;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
@@ -65,6 +66,10 @@ public class DexKitHelper {
     public String NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME = "f";
 
     public String REQUEST_INTERCEPTOR = "com.bilibili.app.comm.list.common.api.d";
+
+    public String IS_POP_UP_AD_VALID_METHOD_NAME = "K";
+
+    //tag0
     private static final String TAG = "dexkitHelper";
 
     // 开启测试模式，强制扫描并打印结果
@@ -126,7 +131,9 @@ public class DexKitHelper {
                     NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME = cacheProps.getProperty("NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME", NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME);
                     NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME = cacheProps.getProperty("NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME", NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME);
                     REQUEST_INTERCEPTOR = cacheProps.getProperty("REQUEST_INTERCEPTOR", REQUEST_INTERCEPTOR);
+                    REQUEST_INTERCEPTOR = cacheProps.getProperty("IS_POP_UP_AD_VALID_METHOD_NAME", IS_POP_UP_AD_VALID_METHOD_NAME);
 
+                    //tag1
                     needScan = false;
                 }
             } catch (Exception e) {
@@ -474,7 +481,28 @@ public class DexKitHelper {
                     Log.e(TAG, "requestInterceptorClassDataList is empty");
                 else REQUEST_INTERCEPTOR = requestInterceptorClassDataList.get(0).getName();
 
-                cacheProps.setProperty("apk_last_modified", String.valueOf(currentApkTime));
+                List<ClassData> pausedPageServiceClassDataList = bridge.findClass(FindClass.create()
+                        .matcher(ClassMatcher.create()
+                                .className("com.bilibili.ship.theseus.united.page.pausedpage.PausedPageService")
+                        )
+                );
+                if(pausedPageServiceClassDataList.isEmpty())Log.e(TAG,"pausedPageServiceClassDataList is empty");
+                else {
+                    List<MethodData> isPopUpAdValidMethodDataList = bridge.findMethod(FindMethod.create()
+                            .searchInClass(pausedPageServiceClassDataList)
+                            .matcher(MethodMatcher.create()
+                                    .paramCount(1)
+                                    .returnType("boolean")
+                                    .paramTypes("kotlinx.coroutines.Job")
+                            )
+                    );
+                    if(isPopUpAdValidMethodDataList.isEmpty())Log.d(TAG,"isPopUpAdValidMethodDataList is empty");
+                    else {
+                        IS_POP_UP_AD_VALID_METHOD_NAME = isPopUpAdValidMethodDataList.get(0).getMethodName();
+                    }
+                }
+
+                    cacheProps.setProperty("apk_last_modified", String.valueOf(currentApkTime));
                 cacheProps.setProperty("module_last_modified", String.valueOf(currentModuleTime));
                 cacheProps.setProperty("albumRecycleViewHolderClassName", albumRecycleViewHolderClassName);
                 cacheProps.setProperty("publishArchiveCollectionFieldName", publishArchiveCollectionFieldName);
@@ -505,8 +533,9 @@ public class DexKitHelper {
                 cacheProps.setProperty("NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME", NETWORK_SHOW_TOAST_SERVICE_CLASS_NAME);
                 cacheProps.setProperty("NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME", NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME);
                 cacheProps.setProperty("REQUEST_INTERCEPTOR", REQUEST_INTERCEPTOR);
+                cacheProps.setProperty("IS_POP_UP_AD_VALID_METHOD_NAME", IS_POP_UP_AD_VALID_METHOD_NAME);
 
-
+                //tag2
                 cacheFile.getParentFile().mkdirs();
                 try (FileOutputStream fos = new FileOutputStream(cacheFile)) {
                     cacheProps.store(fos, "DexKit Obfuscation Cache for BiliBili");

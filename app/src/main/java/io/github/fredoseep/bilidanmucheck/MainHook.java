@@ -107,8 +107,11 @@ public class MainHook implements IXposedHookLoadPackage {
         InterfaceDumper.hook(lpparam.classLoader);
         FollowingListAdSniper.hook(lpparam.classLoader);
         FollowingTopLeftButton.hook(lpparam.classLoader);
+        PausePopUpSniper.hook(lpparam.classLoader,helper);
+
         if(BuildConfig.DEBUG) {
             IgHttpEngineHook.hook(lpparam.classLoader);
+            VipPredictTrace.hook(lpparam.classLoader);
         }
 //        VipJsonTestHook.hook(lpparam.classLoader);
 //        EffectiveVipTesting.hook(lpparam.classLoader);
