@@ -70,8 +70,18 @@ public class MainHook implements IXposedHookLoadPackage {
         helper.resolve(lpparam);
 
         log("开始执行业务 Hook 逻辑...");
-        executeOriginalHooks(lpparam, helper);
-        BiliCardAdSniper.hook(lpparam.classLoader, helper);
+        try{
+            executeOriginalHooks(lpparam, helper);
+        } catch (Exception e) {
+            Log.e(TAG,"Error1  : "+e.getMessage());
+        }
+
+        try{
+            BiliCardAdSniper.hook(lpparam.classLoader, helper);
+        } catch (Exception e) {
+            Log.e(TAG,"Error2  : "+e.getMessage());
+        }
+
 
         // ---- 新增：版本号检测逻辑 ----
         boolean shouldRunDescCopyFix = true;
@@ -94,24 +104,84 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             log("获取宿主版本号失败，将默认执行 descCopyFix: " + t.getMessage());
         }
-        BiliAdSniper.hook(lpparam.classLoader);
-        BiliSplashSniper.hook(lpparam.classLoader, helper);
-        BiliMentionedSniper.hook(lpparam.classLoader, helper);
-        BiliBottomNavSniper.hook(lpparam.classLoader);
-        GlobalAdSniperEngine.hook(lpparam.classLoader, helper);
-        PacketSniffer.hook(lpparam.classLoader);
-        VIPPredict.hook(lpparam.classLoader, helper);
-        LiveRoomAdSniper.hook(lpparam.classLoader, helper);
-        FreeDataToastSniper.hook(lpparam.classLoader, helper);
-        DanmuJump.hook(lpparam.classLoader);
-        InterfaceDumper.hook(lpparam.classLoader);
-        FollowingListAdSniper.hook(lpparam.classLoader);
-        FollowingTopLeftButton.hook(lpparam.classLoader);
-        PausePopUpSniper.hook(lpparam.classLoader,helper);
+
+        try{
+            BiliAdSniper.hook(lpparam.classLoader);
+        } catch (Exception e) {
+            Log.e(TAG,"Error3  : "+e.getMessage());
+        }
+        try{
+            BiliSplashSniper.hook(lpparam.classLoader, helper);
+        } catch (Exception e) {
+            Log.e(TAG,"Error4  : "+e.getMessage());
+        }
+        try{
+            BiliMentionedSniper.hook(lpparam.classLoader, helper);
+        } catch (Exception e) {
+            Log.e(TAG,"Error5  : "+e.getMessage());
+        }
+        try{
+            BiliBottomNavSniper.hook(lpparam.classLoader);
+        } catch (Exception e) {
+            Log.e(TAG,"Error6  : "+e.getMessage());
+        }
+        try{
+            GlobalAdSniperEngine.hook(lpparam.classLoader, helper);
+        } catch (Exception e) {
+            Log.e(TAG,"Error7  : "+e.getMessage());
+        }
+        try{
+            PacketSniffer.hook(lpparam.classLoader);
+        } catch (Exception e) {
+            Log.e(TAG,"Error8  : "+e.getMessage());
+        }
+        try{
+            LiveRoomAdSniper.hook(lpparam.classLoader, helper);
+        } catch (Exception e) {
+            Log.e(TAG,"Error9  : "+e.getMessage());
+        }
+        try{
+            FreeDataToastSniper.hook(lpparam.classLoader, helper);
+        } catch (Exception e) {
+            Log.e(TAG,"Error10  : "+e.getMessage());
+        }
+        try{
+            DanmuJump.hook(lpparam.classLoader);
+        } catch (Exception e) {
+            Log.e(TAG,"Error11  : "+e.getMessage());
+        }
+        try{
+            InterfaceDumper.hook(lpparam.classLoader);
+        } catch (Exception e) {
+            Log.e(TAG,"Error12 : "+e.getMessage());
+        }
+        try{
+            FollowingListAdSniper.hook(lpparam.classLoader);
+        } catch (Exception e) {
+            Log.e(TAG,"Error13  : "+e.getMessage());
+        }
+        try{
+            FollowingTopLeftButton.hook(lpparam.classLoader);
+        } catch (Exception e) {
+            Log.e(TAG,"Error14  : "+e.getMessage());
+        }
+        try{
+            PausePopUpSniper.hook(lpparam.classLoader,helper);
+        } catch (Exception e) {
+            Log.e(TAG,"Error15  : "+e.getMessage());
+        }
 
         if(BuildConfig.DEBUG) {
-            IgHttpEngineHook.hook(lpparam.classLoader);
-            VipPredictTrace.hook(lpparam.classLoader);
+            try{
+                IgHttpEngineHook.hook(lpparam.classLoader);
+            } catch (Exception e) {
+                Log.e(TAG,"Error16  : "+e.getMessage());
+            }
+            try{
+                VipPredictTrace.hook(lpparam.classLoader);
+            } catch (Exception e) {
+                Log.e(TAG,"Error17  : "+e.getMessage());
+            }
         }
 //        VipJsonTestHook.hook(lpparam.classLoader);
 //        EffectiveVipTesting.hook(lpparam.classLoader);

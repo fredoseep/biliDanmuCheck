@@ -66,10 +66,16 @@ public class GlobalAdSniperEngine {
     public static void hook(ClassLoader classLoader,DexKitHelper helper) {
 
         try {
+            String parserClass = helper.PEGASUS_RESPONSE_PARSER_CLASS_NAME;
+            String parserMethod = helper.PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME;
+            if (parserClass == null || parserClass.isEmpty()
+                    || parserMethod == null || parserMethod.isEmpty()) {
+                throw new IllegalStateException("Pegasus response parser unresolved; check [DexKitMatch] PegasusParser.fullResponse");
+            }
             XposedHelpers.findAndHookMethod(
-                    "com.bilibili.pegasus.request.PegasusGsonParser",
+                    parserClass,
                     classLoader,
-                    helper.PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME,
+                    parserMethod,
                     "okhttp3.ResponseBody",
                     new XC_MethodHook() {
                         @Override
@@ -114,21 +120,31 @@ public class GlobalAdSniperEngine {
                                 param.args[0] = newBody;
 
                             } catch (Throwable t) {
-                                Log.e(TAG, "净化或修改响应失败，已回退", t);
+                                Log.d(TAG, "净化或修改响应失败，已回退\n" + Log.getStackTraceString(t));
                             }
                         }
 
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            if (param.hasThrowable()) return;
                             Object result = param.getResult();
                             if (result == null) return;
                             if (result.getClass().getName().contains("ResponseBody")) return;
-                            cleanResponseData(result);
+                            try {
+                                cleanResponseData(result);
+                            } catch (Throwable t) {
+                                Log.d(TAG, "[PegasusParser] 返回对象清理失败\n" + Log.getStackTraceString(t));
+                            }
                         }
                     }
             );
+            Log.d(TAG, "[PegasusParser] hook installed: " + parserClass + "#"
+                    + parserMethod + "(okhttp3.ResponseBody)");
         } catch (Throwable e) {
-            Log.e(TAG, "Hook PegasusGsonParser.g 失败: " + e.getMessage());
+            Log.d(TAG, "[PegasusParser] hook failed: "
+                    + helper.PEGASUS_RESPONSE_PARSER_CLASS_NAME + "#"
+                    + helper.PEGASUS_SUS_GSON_PARSER_PARSER_METHOD_NAME
+                    + "\n" + Log.getStackTraceString(e));
         }
 
         installSplashFilter(classLoader);

@@ -520,7 +520,8 @@ public final class VipPredictTrace {
                 Log.d(TAG, (i == 0 ? "" : "seq=" + seq + " continuation ")
                         + line.substring(i, Math.min(i + 1800, line.length())));
             }
-            WRITER.execute(() -> append(line));
+            // 安装成功提示仅输出 Logcat，不进入文件队列或启动缓存。
+            if (!"HOOK_OK".equals(stage)) WRITER.execute(() -> append(line));
         } catch (Throwable e) { Log.d(TAG, "TRACE_LOG_FAIL " + e); }
     }
 
