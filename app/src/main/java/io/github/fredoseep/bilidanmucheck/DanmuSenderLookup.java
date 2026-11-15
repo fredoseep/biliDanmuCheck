@@ -130,20 +130,17 @@ public final class DanmuSenderLookup {
         XC_MethodHook universalRpcHook = new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                if (param.args == null || param.args.length < 3) return;
-
-                Object payload = param.args[2];
-                if (payload == null) return;
-
-                String className = payload.getClass().getName();
-
-                if (className.endsWith("EventReport$Request")) {
-                    parseEventReport(payload);
+                if (param.args == null) return;
+                for (Object payload : param.args) {
+                    if (payload != null && payload.getClass().getName().endsWith("EventReport$Request")) {
+                        parseEventReport(payload);
+                        break;
+                    }
                 }
             }
         };
 
-        if ("com.bilibili.app.in".equals(lpparam.packageName)) {
+        { // Enhanced runner is also used by the domestic app.
             try {
                 Class<?> function6Class = XposedHelpers.findClass("kotlin.jvm.functions.Function6", lpparam.classLoader);
                 Class<?> oClass = XposedHelpers.findClass(helper.INTERNATIONAL_CHRONOS_RPC_CLASS_NAME, lpparam.classLoader);
@@ -153,25 +150,22 @@ public final class DanmuSenderLookup {
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         Object handlerImpl = param.args[1];
                         if (handlerImpl != null) {
-                            XposedBridge.hookAllMethods(handlerImpl.getClass(), "invoke", universalRpcHook);
+                            installRpcHandler(handlerImpl.getClass(), universalRpcHook);
                         }
                     }
                 });
+                Log.d(TAG, "[ChronosRpc] registration hook installed: "
+                        + helper.INTERNATIONAL_CHRONOS_RPC_CLASS_NAME + "#" + helper.INTERNATIONAL_INVOKE_METHOD_NAME);
             } catch (Throwable t) {
-                log("bilibili.in fails to pin: " + t.toString());
+                Log.d(TAG, "[ChronosRpc] registration hook failed\n" + Log.getStackTraceString(t));
             }
-        } else {
+        }
+        {
             // 【新版本策略】：使用 DexKit 获取到的动态类名
             try {
                 if (helper.CHRONOS_RPC_CLASS_NAME != null && !helper.CHRONOS_RPC_CLASS_NAME.isEmpty()) {
                     Class<?> targetClass = XposedHelpers.findClass(helper.CHRONOS_RPC_CLASS_NAME, lpparam.classLoader);
-                    for (java.lang.reflect.Method method : targetClass.getDeclaredMethods()) {
-                        if (method.getName().equals("invoke")) {
-                            XposedBridge.hookMethod(method, universalRpcHook);
-                            log("✅ Hook 新版 ChronosRpc 成功绑定类: " + helper.CHRONOS_RPC_CLASS_NAME);
-                            break;
-                        }
-                    }
+                    installRpcHandler(targetClass, universalRpcHook);
                 }
             } catch (Throwable t) {
                 log("Hook 新版 ChronosRpc 失败 (该版本可能不支持): " + t.getMessage());
@@ -181,7 +175,7 @@ public final class DanmuSenderLookup {
             try {
                 String hardcodedTargetClass = "tv.danmaku.biliplayerv2.service.interact.biz.chronos.chronosrpc.ChronosMessageHandler";
                 Class<?> targetClass = XposedHelpers.findClass(hardcodedTargetClass, lpparam.classLoader);
-                XposedBridge.hookAllMethods(targetClass, "invoke", universalRpcHook);
+                installRpcHandler(targetClass, universalRpcHook);
                 log("✅ Hook 旧版 ChronosRpc 成功硬编码绑定类: " + hardcodedTargetClass);
             } catch (Throwable t) {
                 log("Hook 旧版 ChronosRpc 失败 (新版可能不存在此旧类): " + t.getMessage());
@@ -191,6 +185,27 @@ public final class DanmuSenderLookup {
         hookClipboardToJump(lpparam);
     }
 
+
+    private static final java.util.Set<java.lang.reflect.Method> RPC_HOOKS = new java.util.HashSet<>();
+
+    private static void installRpcHandler(Class<?> type, XC_MethodHook callback) {
+        int installed = 0;
+        for (java.lang.reflect.Method method : type.getDeclaredMethods()) {
+            // Hook the typed implementation, not its erased bridge (which calls it again).
+            if (!method.getName().equals("invoke") || method.isBridge() || method.isSynthetic()) continue;
+            synchronized (RPC_HOOKS) {
+                if (!RPC_HOOKS.add(method)) continue;
+                try {
+                    XposedBridge.hookMethod(method, callback);
+                    installed++;
+                } catch (Throwable error) {
+                    RPC_HOOKS.remove(method);
+                    Log.d(TAG, "[ChronosRpc] hook failed: " + method + "\n" + Log.getStackTraceString(error));
+                }
+            }
+        }
+        Log.d(TAG, "[ChronosRpc] handler=" + type.getName() + ", installed=" + installed);
+    }
 
     private void parseEventReport(Object payload) {
         try {
@@ -350,6 +365,7 @@ public final class DanmuSenderLookup {
 
     private static SenderAccountResult checkSenderAccount(String uid) {
         HttpURLConnection connection = null;
+        String stage = "validate UID";
         try {
             if (!uid.matches("[1-9][0-9]{0,18}")) {
                 return new SenderAccountResult(0, "", "UID 格式错误");
@@ -362,13 +378,19 @@ public final class DanmuSenderLookup {
 
             // 使用宿主同款拦截器添加公共参数、预加载参数及请求头。
             // 不在模块中硬编码签名或登录凭证，也不打印最终 URL/请求头。
+            stage = "load okhttp3.Request$Builder";
             Class<?> builderClass = XposedHelpers.findClass("okhttp3.Request$Builder", loader);
             Object builder = XposedHelpers.newInstance(builderClass);
             XposedHelpers.callMethod(builder, "url", url);
             XposedHelpers.callMethod(builder, "get");
             Object request = XposedHelpers.callMethod(builder, "build");
-            Object interceptor = XposedHelpers.newInstance(XposedHelpers.findClass(
-                    dexHelper.REQUEST_INTERCEPTOR, loader));
+            String interceptorName = dexHelper == null ? "" : dexHelper.REQUEST_INTERCEPTOR;
+            stage = "load space interceptor: " + interceptorName;
+            if (interceptorName == null || interceptorName.isEmpty()) {
+                throw new IllegalStateException("Space interceptor unresolved; check [SpaceResolve]");
+            }
+            Object interceptor = XposedHelpers.newInstance(XposedHelpers.findClass(interceptorName, loader));
+            stage = "prepare space request with " + interceptorName;
             Object prepared = XposedHelpers.callMethod(interceptor, "intercept", request);
             String preparedUrl = XposedHelpers.callMethod(prepared, "url").toString();
             URL parsedUrl = new URL(preparedUrl);
@@ -377,6 +399,7 @@ public final class DanmuSenderLookup {
                     || !"/x/v2/space".equals(parsedUrl.getPath())) {
                 throw new IllegalStateException("拦截器返回了非预期地址");
             }
+            stage = "HTTP space request";
             connection = (HttpURLConnection) parsedUrl.openConnection();
             connection.setRequestMethod("GET");
             connection.setInstanceFollowRedirects(false);
@@ -409,13 +432,18 @@ public final class DanmuSenderLookup {
                     }
                     output.write(buffer, 0, count);
                 }
+                stage = "parse space JSON";
                 return classifySenderAccount(uid, new org.json.JSONObject(
                         output.toString("UTF-8")));
             }
         } catch (Throwable t) {
-            // 异常只记录类型，避免宿主异常消息包含 access_key/sign 等参数。
-            Log.d(TAG, "[SenderSpaceCheck] uid=" + uid + " failed=" + t.getClass().getName());
-            return new SenderAccountResult(0, "", "请求或解析失败：" + t.getClass().getSimpleName());
+            // Preserve missing class names and call sites while redacting request query strings.
+            String stack = Log.getStackTraceString(t)
+                    .replaceAll("(?i)(https?://[^\\s?]+)\\?[^\\s]+", "$1?<redacted>")
+                    .replaceAll("(?i)((?:access_key|access_token|authorization|cookie|sign|token)\\s*[=:]\\s*)[^\\s&,]+", "$1<redacted>");
+            Log.d(TAG, "[SenderSpaceCheck] uid=" + uid + " stage=" + stage
+                    + " failed=" + t.getClass().getName() + "\n" + stack);
+            return new SenderAccountResult(0, "", stage + "：" + t.getClass().getSimpleName());
         } finally {
             if (connection != null) connection.disconnect();
         }

@@ -146,7 +146,7 @@ public class MainHook implements IXposedHookLoadPackage {
             Log.e(TAG,"Error10  : "+e.getMessage());
         }
         try{
-            DanmuJump.hook(lpparam.classLoader);
+            DanmuJump.hook(lpparam.classLoader, helper);
         } catch (Exception e) {
             Log.e(TAG,"Error11  : "+e.getMessage());
         }
@@ -178,7 +178,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 Log.e(TAG,"Error16  : "+e.getMessage());
             }
             try{
-                VipPredictTrace.hook(lpparam.classLoader);
+                VipPredictTrace.hook(lpparam.classLoader, helper);
             } catch (Exception e) {
                 Log.e(TAG,"Error17  : "+e.getMessage());
             }

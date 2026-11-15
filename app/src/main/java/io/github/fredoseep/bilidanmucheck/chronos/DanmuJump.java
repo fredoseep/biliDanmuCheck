@@ -73,14 +73,15 @@ public class DanmuJump {
                 (milliseconds / 1000L) % 60L, milliseconds % 1000L);
     }
 
-    public static void hook(ClassLoader classLoader) {
+    public static void hook(ClassLoader classLoader, io.github.fredoseep.bilidanmucheck.DexKitHelper helper) {
+        DanmuProgressMarkers.install(classLoader, helper);
         ChronosPackageOverride.install(classLoader);
-        installChronosProbe(classLoader);
+        installChronosProbe(classLoader, helper);
         try{
             XposedHelpers.findAndHookMethod(
-                    "com.bilibili.cron.ChronosPackage",
+                    helper.CHRONOS_PACKAGE_CLASS_NAME,
                     classLoader,
-                    "createPackageFromFile",
+                    helper.CHRONOS_CREATE_PACKAGE_METHOD_NAME,
                     android.content.Context.class,
                     java.io.File.class,
                     new XC_MethodHook() {
@@ -181,30 +182,37 @@ public class DanmuJump {
     }
 
     /** Test JS bootstrap execution; does not seek or change the danmaku package. */
-    private static void installChronosProbe(ClassLoader classLoader) {
+    private static void installChronosProbe(ClassLoader classLoader, io.github.fredoseep.bilidanmucheck.DexKitHelper helper) {
         try {
-            Class<?> engineClass = XposedHelpers.findClass(
-                    "com.bilibili.cron.ChronosEngine", classLoader);
-            Class<?> loggerInterface = XposedHelpers.findClass(
-                    "com.bilibili.cron.ChronosPackageRunner$ExternalLogger",
-                    classLoader);
+            Class<?> engineClass = XposedHelpers.findClass(helper.CHRONOS_ENGINE_CLASS_NAME, classLoader);
+            Class<?> packageClass = XposedHelpers.findClass(helper.CHRONOS_PACKAGE_CLASS_NAME, classLoader);
+            Log.d(TAG, "[ChronosProbe] resolved engine=" + engineClass.getName());
 
             XposedBridge.hookAllConstructors(engineClass, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
-                    if (param.args.length != 4) {
-                        return;
-                    }
                     try {
-                        final Object originalLogger = param.args[3];
+                        java.lang.reflect.Constructor<?> constructor = (java.lang.reflect.Constructor<?>) param.method;
+                        Class<?>[] types = constructor.getParameterTypes();
+                        int loggerIndex = ChronosRuntime.findLoggerIndex(types);
+                        if (loggerIndex < 0) return;
+                        Class<?> loggerInterface = types[loggerIndex];
+                        final Object originalLogger = param.args[loggerIndex];
                         final Object ownerEngine = param.thisObject;
                         Object proxy = java.lang.reflect.Proxy.newProxyInstance(
                                 loggerInterface.getClassLoader(),
                                 new Class<?>[]{loggerInterface},
                                 (proxyObject, method, args) -> {
-                                    if ("log".equals(method.getName())
+                                    if (method.getReturnType() == void.class
+                                            && method.getParameterTypes().length == 1
+                                            && method.getParameterTypes()[0] == String.class
                                             && args != null && args.length == 1) {
                                         String message = String.valueOf(args[0]);
+                                        int markerIndex = message.indexOf("[DanmuJumpMarkers]");
+                                        if (markerIndex >= 0 && activeEngine.get() == ownerEngine) {
+                                            DanmuProgressMarkers.accept(message.substring(markerIndex + "[DanmuJumpMarkers]".length()));
+                                        }
+                                        if (message.contains("[DanmuJumpScan]")) Log.d(TAG, "[ChronosJS] " + message);
                                         int voteIndex = message.indexOf("[DanmuJumpVote]");
                                         if (voteIndex >= 0) {
                                             appendVoteLog(message.substring(
@@ -258,7 +266,7 @@ public class DanmuJump {
                                             return null;
                                     }
                                 });
-                        param.args[3] = proxy;
+                        param.args[loggerIndex] = proxy;
                         Log.d(TAG, "[ChronosProbe] logger attached");
                     } catch (Throwable t) {
                         Log.d(TAG, "[ChronosProbe] logger error\n"
@@ -267,11 +275,8 @@ public class DanmuJump {
                 }
             });
 
-            XposedHelpers.findAndHookMethod(
-                    engineClass, "runPackage",
-                    "com.bilibili.cron.ChronosPackage",
-                    String.class,
-                    "com.bilibili.cron.ChronosPackage$LoadCompleteCallback",
+            XposedBridge.hookMethod(
+                    ChronosRuntime.findRunPackage(engineClass, packageClass),
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -445,13 +450,14 @@ public class DanmuJump {
                 byte[] message = java.nio.ByteBuffer.allocate(5 + json.length)
                         .order(java.nio.ByteOrder.BIG_ENDIAN)
                         .put((byte) 0).putInt(json.length).put(json).array();
-                Class<?> callbackType = XposedHelpers.findClass(
-                        "com.bilibili.cron.ChronosPackageRunner$MessageHandledCallback",
-                        engine.getClass().getClassLoader());
+                java.lang.reflect.Method sendMethod = ChronosRuntime.findSendMessage(engine.getClass());
+                Class<?> callbackType = sendMethod.getParameterTypes()[1];
                 Object callback = java.lang.reflect.Proxy.newProxyInstance(
                         callbackType.getClassLoader(), new Class<?>[]{callbackType},
                         (proxy, method, values) -> {
-                            if ("onComplete".equals(method.getName())) {
+                            if (method.getReturnType() == void.class
+                                    && method.getParameterTypes().length == 1
+                                    && method.getParameterTypes()[0] == byte[].class) {
                                 byte[] response = values == null ? null : (byte[]) values[0];
                                 Log.d(TAG, "[ChronosBridge] response=" + decodeResponse(response));
                                 return null;
@@ -464,7 +470,7 @@ public class DanmuJump {
                                 default: return null;
                             }
                         });
-                XposedHelpers.callMethod(engine, "sendMessageAsync", message, callback);
+                sendMethod.invoke(engine, message, callback);
                 Log.d(TAG, "[ChronosBridge] sent targetMs=" + targetMs);
             } catch (Throwable t) {
                 Log.d(TAG, "[ChronosBridge] send error\n" + Log.getStackTraceString(t));
@@ -528,11 +534,7 @@ public class DanmuJump {
                 byte[] frame = java.nio.ByteBuffer.allocate(5 + json.length)
                         .order(java.nio.ByteOrder.BIG_ENDIAN)
                         .put((byte) 0).putInt(json.length).put(json).array();
-                Class<?> callbackClass = XposedHelpers.findClass(
-                        "com.bilibili.cron.ChronosPackageRunner$MessageHandledCallback",
-                        engine.getClass().getClassLoader());
-                XposedHelpers.callMethod(engine, "sendMessageAsync",
-                        new Class<?>[]{byte[].class, callbackClass}, frame, null);
+                ChronosRuntime.findSendMessage(engine.getClass()).invoke(engine, frame, null);
             } catch (Throwable t) {
                 Log.d(TAG, "[ChronosBridge] candidate relay error\n" + Log.getStackTraceString(t));
             }

@@ -36,23 +36,12 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
-/**
- * Bilibili 9.18.0：只观察，不修改参数、开关或返回值。
- * 入口：VipPredictTrace.hook(lpparam.classLoader);
- * 日志：Context.getFilesDir()/vip_predict_trace/<进程名>.log，8 MiB 轮换一份 .1。
- * trace ID 是协程上下文的尽力关联；最终 JS 回调另用 bridge 实例 + callbackId 精确匹配。
- * ENTER/EXIT 是单次 Java 调用；EXIT=COROUTINE_SUSPENDED 只表示挂起，不表示失败或最终结果。
- * PAGE 是异步在主线程读取的页面快照；若页面迅速跳转，可能读到跳转后的 URL。
- * 启动后应先看到 FILE_READY、HOOK_OK；完全没有 JSB_EXECUTE 通常说明尚未命中网页请求。
- * Java 8 源码，只依赖 Android SDK 和传统 Xposed API；无需编译依赖 Bilibili/Fastjson/Kotlin。
- */
+
 public final class VipPredictTrace {
     private static final String TAG = "VipPredictTrace";
     private static final String VIP = "com.bilibili.tensorflow.model.mem.VipOpenMembershipPredictTFClient";
     private static final String OGV = "com.bilibili.tensorflow.model.mem.OgvOpenMembershipPredictTFClient";
     private static final String EXTRA = "VipPredictTrace.state";
-    // 默认只记录每个时间窗的完整结果，避免逐事件日志影响原业务的 1 秒超时。
-    private static final boolean TRACE_EACH_FEATURE = false;
     private static final long MAX_FILE_BYTES = 8L * 1024 * 1024;
     private static final AtomicLong IDS = new AtomicLong();
     private static final AtomicLong LINES = new AtomicLong();
@@ -78,7 +67,7 @@ public final class VipPredictTrace {
 
     private VipPredictTrace() {}
 
-    public static void hook(ClassLoader classLoader) {
+    public static void hook(ClassLoader classLoader, DexKitHelper helper) {
         synchronized (LOADERS) {
             if (!LOADERS.add(classLoader)) return;
         }
@@ -89,24 +78,9 @@ public final class VipPredictTrace {
         watch(classLoader, "com.bilibili.common.webview.js.JsbDynamicHandler", "invokeNative", "JSB_DISPATCH");
         watch(classLoader, "com.bilibili.tensorflow.jsb.TfLiteModelService", "execute", "JSB_EXECUTE");
         hookServiceConstructors(classLoader);
-        watch(classLoader, VIP, "h", "VIP_ENTRY");
-        watch(classLoader, VIP, "b", "VIP_TIMEOUT_WRAPPER");
-        watch(classLoader, VIP, "a", "VIP_PREPARE_PREDICT");
-        watch(classLoader, VIP, "g", "VIP_REMOTE_FEATURES");
-        watch(classLoader, VIP, "e", "VIP_LOCAL_WINDOWS");
-        watch(classLoader, VIP, "f", "VIP_LOCAL_WINDOW");
-        if (TRACE_EACH_FEATURE) watch(classLoader, VIP, "c", "VIP_EVENT_SUM");
-        watch(classLoader, VIP, "d", "VIP_INFERENCE");
-        watch(classLoader, "Do0.a", "a", "CONFIG");
+        installResolvedTargets(classLoader, helper);
+        // Public entry names are kept; obfuscated implementation letters are never guessed.
         watch(classLoader, "com.bilibili.tflite.TFLite", "prepare", "TF_SO_PREPARE");
-        watch(classLoader, "com.bilibili.tflite.a", "a", "TF_SO_FILE");
-        watch(classLoader, "com.bilibili.tensorflow.model.mem.c", "b", "MODEL_PREPARE");
-        watch(classLoader, "com.bilibili.tensorflow.model.mem.c", "a", "TRANSFORM_PREPARE");
-        watch(classLoader, "com.bilibili.tensorflow.data.mem.TfOpenMemberReportEventLoader", "b", "EVENT_MAP_PREPARE");
-        if (TRACE_EACH_FEATURE) watch(classLoader, "com.bilibili.tensorflow.utils.b", "b", "FEATURE_BUCKET");
-        // 另一条会员预测实现，避免只盯着 VIP.d 而漏掉 OGV.b。
-        watch(classLoader, OGV, "i", "OGV_START");
-        watch(classLoader, OGV, "b", "OGV_INFERENCE");
         watch(classLoader, "kntr.base.utils.foundation.RomUtils", "isHuaweiRom", "ROM_HUAWEI");
         watch(classLoader, "kntr.base.utils.foundation.RomUtils", "isHonorRom", "ROM_HONOR");
         watch(classLoader, "kntr.base.utils.foundation.RomUtils", "isHarmony", "ROM_HARMONY");
@@ -127,6 +101,42 @@ public final class VipPredictTrace {
         for (String name : coroutines) hookCoroutine(classLoader, name);
         hookBusinessErrors(classLoader);
         event(null, "INSTALL_END", "请检查 HOOK_OK / HOOK_MISSING / HOOK_FAIL；本类不主动发起预测");
+    }
+
+    private static void installResolvedTargets(ClassLoader loader, DexKitHelper helper) {
+        if (helper == null || helper.VIP_TRACE_TARGETS.isEmpty()) {
+            event(null, "HOOK_MISSING", "DexKit VIP_TRACE_TARGETS is empty; check [VipResolve]");
+            return;
+        }
+        Set<Method> installed = new HashSet<>();
+        for (String target : helper.VIP_TRACE_TARGETS.split("\n")) {
+            String[] parts = target.split("#", 3);
+            if (parts.length != 3) continue;
+            try {
+                Class<?> type = XposedHelpers.findClass(parts[0], loader);
+                for (Method method : type.getDeclaredMethods()) {
+                    if (!method.getName().equals(parts[1]) || method.isBridge() || method.isSynthetic()
+                            || java.lang.reflect.Modifier.isAbstract(method.getModifiers())
+                            || !installed.add(method)) continue;
+                    String stage = parts[2] + ":" + method.getName();
+                    Class<?>[] parameters = method.getParameterTypes();
+                    if ((parts[2].equals("VIP_METHOD") || parts[2].equals("OGV_METHOD"))
+                            && parameters.length == 2 && List.class.isAssignableFrom(parameters[0])
+                            && ByteBuffer.class.isAssignableFrom(parameters[1])) {
+                        stage = parts[2].startsWith("VIP") ? "VIP_INFERENCE" : "OGV_INFERENCE";
+                    } else if (parts[2].equals("JSB_METHOD") && method.getName().equals("execute")
+                            && parameters.length >= 2) {
+                        // Already installed by the stable JSB execute entry above.
+                        continue;
+                    }
+                    XposedBridge.hookMethod(method, observer(stage));
+                    event(null, "HOOK_OK", stage + " " + method);
+                }
+            } catch (Throwable error) {
+                event(null, "HOOK_FAIL", target + " " + Log.getStackTraceString(error));
+            }
+        }
+        event(null, "DEXKIT_TARGETS", "installed=" + installed.size());
     }
 
     private static final class Trace {
@@ -164,7 +174,8 @@ public final class VipPredictTrace {
                         t = new Trace(stage);
                     } else if ("JSB_EXECUTE".equals(stage) || "VIP_ENTRY".equals(stage)
                             || "VIP_INFERENCE".equals(stage) || "OGV_START".equals(stage)
-                            || "OGV_INFERENCE".equals(stage)) {
+                            || "OGV_INFERENCE".equals(stage) || stage.startsWith("VIP_METHOD:")
+                            || stage.startsWith("OGV_METHOD:") || stage.startsWith("CONFIG_SITE:")) {
                         if (t == null) t = new Trace(stage);
                     } else if ("CONFIG".equals(stage)) {
                         if (p.args.length == 0 || !isConfigKey(p.args[0])) return;
@@ -177,7 +188,7 @@ public final class VipPredictTrace {
                     linkContinuationArgs(p.args, t);
                     String input;
                     if ("JSB_EXECUTE".equals(stage)) {
-                        Object bridge = field(p.thisObject, "a");
+                        Object bridge = findBridge(p.thisObject);
                         hookCallbackClass(bridge);
                         String callback = String.valueOf(p.args[1]);
                         // 协程生成类恢复时会调用 execute(null, null, this)，不是新网页请求。
@@ -207,7 +218,7 @@ public final class VipPredictTrace {
                     } else if (stage.startsWith("CO:")) {
                         input = "instance=" + identity(p.thisObject) + " label=" + field(p.thisObject, "label");
                     } else {
-                        input = "continuation=" + continuationInfo(p.args);
+                        input = "args=" + value(p.args) + " continuation=" + continuationInfo(p.args);
                     }
                     event(t, stage + " ENTER", input);
                     if ("VIP_ENTRY".equals(stage) || stage.endsWith("INFERENCE")) {
@@ -264,13 +275,32 @@ public final class VipPredictTrace {
         } catch (Throwable e) { event(null, "HOOK_FAIL", name + " " + e); }
     }
 
+    private static Object findBridge(Object service) {
+        if (service == null) return null;
+        for (Class<?> type = service.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Field candidate : type.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(candidate.getModifiers()) || candidate.getType().isPrimitive()) continue;
+                try {
+                    candidate.setAccessible(true);
+                    Object value = candidate.get(service);
+                    if (value == null) continue;
+                    for (Method method : value.getClass().getMethods()) {
+                        if (method.getName().equals("callbackToJs") && method.getParameterTypes().length == 1
+                                && method.getParameterTypes()[0] == Object[].class) return value;
+                    }
+                } catch (Throwable ignored) {}
+            }
+        }
+        return null;
+    }
+
     private static void hookServiceConstructors(ClassLoader loader) {
         try {
             Class<?> c = XposedHelpers.findClass("com.bilibili.tensorflow.jsb.TfLiteModelService", loader);
             XposedBridge.hookAllConstructors(c, new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     try {
-                        Object bridge = field(p.thisObject, "a");
+                        Object bridge = findBridge(p.thisObject);
                         hookCallbackClass(bridge);
                         event(CURRENT.get(), "JSB_SERVICE_CREATED", "bridge=" + identity(bridge));
                     } catch (Throwable e) { event(CURRENT.get(), "TRACE_ERROR", "service constructor " + e); }

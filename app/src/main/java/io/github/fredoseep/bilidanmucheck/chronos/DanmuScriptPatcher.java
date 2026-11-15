@@ -42,7 +42,9 @@ final class DanmuScriptPatcher {
             String replacement = patch.getString("replace")
                     .replace("{{CONFIG}}", settings)
                     .replace("{{BRIDGE}}", bridge)
-                    .replace("{{PROMPT}}", prompt);
+                    .replace("{{PROMPT}}", prompt)
+                    .replace("{{PARSER}}", parser)
+                    .replace("{{FULLSCAN}}", asset(host, "full-scan.js"));
             main = main.replace(patch.getString("find"), replacement);
         }
         worker = parser + "\nconst __DJ_CONFIG=" + settings + ";\n"

@@ -28,6 +28,17 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class DexKitHelper {
 
+    public String PROGRESS_VIEW_CLASS_NAME = "";
+    public String PROGRESS_POINT_CLASS_NAME = "";
+    public String PROGRESS_UI_STATE_CLASS_NAME = "";
+    public String PROGRESS_MARKER_UI_CLASS_NAME = "";
+    public String PROGRESS_DRAW_CLASS_NAME = "";
+    public String CHRONOS_ENGINE_CLASS_NAME = "com.bilibili.cron.ChronosEngine";
+    public String CHRONOS_PACKAGE_CLASS_NAME = "com.bilibili.cron.ChronosPackage";
+    public String CHRONOS_CREATE_PACKAGE_METHOD_NAME = "createPackageFromFile";
+    // Newline-separated class#method#stage targets. Names come from DEX, not JADX aliases.
+    public String VIP_TRACE_TARGETS = "";
+
     public String CHRONOS_RPC_CLASS_NAME = "tv.danmaku.biliplayerv2.service.interact.biz.chronos.chronosrpc.a";
 
     public String INTERNATIONAL_CHRONOS_RPC_CLASS_NAME = "com.bilibili.common.chronoscommon.o";
@@ -45,7 +56,6 @@ public class DexKitHelper {
     public String VIEW_ENTRY_CLASS_NAME = "com.bilibili.app.gemini.ui.UIComponent$ViewEntry";
     public String UI_COMPONENT_B_CLASS_NAME = "com.bilibili.app.gemini.ui.UIComponent$b";
 
-    public String SEARCH_RESULT_ADAPTER_CLASS_NAME = "com.bilibili.search2.result.all.b";
 
     public String HOME_CARD_ADAPTER_CLASS_NAME = "ct0.c";
 
@@ -64,11 +74,11 @@ public class DexKitHelper {
 
     public String NETWORK_SHOW_TOAST_SERVICE_METHOD_NAME = "f";
 
-    public String REQUEST_INTERCEPTOR = "com.bilibili.app.comm.list.common.api.d";
+    public String REQUEST_INTERCEPTOR = "";
 
     public String IS_POP_UP_AD_VALID_METHOD_NAME = "K";
 
-    private static final String CACHE_SCHEMA = "3-pegasus-response-parser";
+    private static final String CACHE_SCHEMA = "8-progress-legacy-markers";
     private final Set<String> resolvedFields = new HashSet<>();
 
     //tag0
@@ -106,6 +116,15 @@ public class DexKitHelper {
                         && currentModuleTime != 0
                         && CACHE_SCHEMA.equals(cacheProps.getProperty("cache_schema"))) {
                     Log.d(TAG, "Hit DexKit cache. Neither host nor module updated, skipping scan.");
+                    PROGRESS_VIEW_CLASS_NAME = cacheProps.getProperty("PROGRESS_VIEW_CLASS_NAME", "");
+                    PROGRESS_POINT_CLASS_NAME = cacheProps.getProperty("PROGRESS_POINT_CLASS_NAME", "");
+                    PROGRESS_UI_STATE_CLASS_NAME = cacheProps.getProperty("PROGRESS_UI_STATE_CLASS_NAME", "");
+                    PROGRESS_MARKER_UI_CLASS_NAME = cacheProps.getProperty("PROGRESS_MARKER_UI_CLASS_NAME", "");
+                    PROGRESS_DRAW_CLASS_NAME = cacheProps.getProperty("PROGRESS_DRAW_CLASS_NAME", "");
+                    CHRONOS_ENGINE_CLASS_NAME = cacheProps.getProperty("CHRONOS_ENGINE_CLASS_NAME", CHRONOS_ENGINE_CLASS_NAME);
+                    CHRONOS_PACKAGE_CLASS_NAME = cacheProps.getProperty("CHRONOS_PACKAGE_CLASS_NAME", CHRONOS_PACKAGE_CLASS_NAME);
+                    CHRONOS_CREATE_PACKAGE_METHOD_NAME = cacheProps.getProperty("CHRONOS_CREATE_PACKAGE_METHOD_NAME", CHRONOS_CREATE_PACKAGE_METHOD_NAME);
+                    VIP_TRACE_TARGETS = cacheProps.getProperty("VIP_TRACE_TARGETS", VIP_TRACE_TARGETS);
                     CHRONOS_RPC_CLASS_NAME = cacheProps.getProperty("CHRONOS_RPC_CLASS_NAME", CHRONOS_RPC_CLASS_NAME);
                     DESCRIPTION_TEXTVIEW_CLASS_NAME = cacheProps.getProperty("DESCRIPTION_TEXTVIEW_CLASS_NAME", DESCRIPTION_TEXTVIEW_CLASS_NAME);
                     INTERNATIONAL_CHRONOS_RPC_CLASS_NAME = cacheProps.getProperty("INTERNATIONAL_CHRONOS_RPC_CLASS_NAME", INTERNATIONAL_CHRONOS_RPC_CLASS_NAME);
@@ -120,7 +139,6 @@ public class DexKitHelper {
                     VIDEO_MENTIONED_COMPONENT_CLASS_NAME = cacheProps.getProperty("VIDEO_MENTIONED_COMPONENT_CLASS_NAME", VIDEO_MENTIONED_COMPONENT_CLASS_NAME);
                     UI_COMPONENT_B_CLASS_NAME = cacheProps.getProperty("UI_COMPONENT_B_CLASS_NAME", UI_COMPONENT_B_CLASS_NAME);
                     VIEW_ENTRY_CLASS_NAME = cacheProps.getProperty("VIEW_ENTRY_CLASS_NAME", VIEW_ENTRY_CLASS_NAME);
-                    SEARCH_RESULT_ADAPTER_CLASS_NAME = cacheProps.getProperty("SEARCH_RESULT_ADAPTER_CLASS_NAME", SEARCH_RESULT_ADAPTER_CLASS_NAME);
                     HOME_CARD_ADAPTER_CLASS_NAME = cacheProps.getProperty("HOME_CARD_ADAPTER_CLASS_NAME", HOME_CARD_ADAPTER_CLASS_NAME);
                     CARD_INFO_SETTING_METHOD_NAME = cacheProps.getProperty("CARD_INFO_SETTING_METHOD_NAME", CARD_INFO_SETTING_METHOD_NAME);
 
@@ -151,17 +169,65 @@ public class DexKitHelper {
 
 
 
-                scan("ChronosRpc", () -> {
-                    MethodMatcher matcher3 = MethodMatcher.create()
-                            .usingStrings("DmsegLoader");
+                scan("ProgressLegacyMarkers", () -> {
+                    ClassData view = requireUnique("Progress.legacyView", bridge.findClass(FindClass.create()
+                            .matcher(ClassMatcher.create().usingStrings("PlayerDotSeekBar"))));
+                    ClassData point = requireUnique("Progress.legacyPoint", bridge.findClass(FindClass.create()
+                            .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name("<init>")
+                                    .paramTypes("int", "int", "boolean", "java.lang.Integer", "java.lang.Float",
+                                            "kotlin.jvm.functions.Function1")))));
+                    PROGRESS_VIEW_CLASS_NAME = view.getName();
+                    PROGRESS_POINT_CLASS_NAME = point.getName();
+                    resolvedFields.add("PROGRESS_VIEW_CLASS_NAME");
+                    resolvedFields.add("PROGRESS_POINT_CLASS_NAME");
+                    Log.d(TAG, "[ProgressResolve] legacyView=" + view.getName() + ", point=" + point.getName());
+                });
 
-                    List<MethodData> result3 = bridge.findMethod(FindMethod.create().matcher(matcher3));
-                    logMatches("ChronosRpc.result3", result3);
-                    if (!result3.isEmpty()) {
-                        CHRONOS_RPC_CLASS_NAME = result3.get(0).getClassName();
-                        resolvedFields.add("CHRONOS_RPC_CLASS_NAME");
-                        Log.d(TAG, "找到 ChronosRpc: " + CHRONOS_RPC_CLASS_NAME);
-                    }
+                scan("ProgressMarkers", () -> {
+                    ClassData state = requireUnique("Progress.uiState", bridge.findClass(FindClass.create()
+                            .matcher(ClassMatcher.create().usingStrings("PlayerProgressUiState(position="))));
+                    ClassData marker = requireUnique("Progress.markerUiState", bridge.findClass(FindClass.create()
+                            .matcher(ClassMatcher.create().usingStrings("PlayerProgressMarkerUiState(position="))));
+                    ClassData draw = requireUnique("Progress.drawLambda", bridge.findClass(FindClass.create()
+                            .matcher(ClassMatcher.create().addField(FieldMatcher.create().type(state.getName()))
+                                    .addField(FieldMatcher.create().type("java.util.List"))
+                                    .addMethod(MethodMatcher.create().name("invoke")
+                                            .paramTypes("java.lang.Object").returnType("java.lang.Object")))));
+                    PROGRESS_UI_STATE_CLASS_NAME = state.getName();
+                    PROGRESS_MARKER_UI_CLASS_NAME = marker.getName();
+                    PROGRESS_DRAW_CLASS_NAME = draw.getName();
+                    resolvedFields.add("PROGRESS_UI_STATE_CLASS_NAME");
+                    resolvedFields.add("PROGRESS_MARKER_UI_CLASS_NAME");
+                    resolvedFields.add("PROGRESS_DRAW_CLASS_NAME");
+                    Log.d(TAG, "[ProgressResolve] state=" + state.getName() + ", marker=" + marker.getName()
+                            + ", draw=" + draw.getName());
+                });
+
+                scan("ChronosNative", () -> {
+                    CHRONOS_ENGINE_CLASS_NAME = resolveNativeClass(bridge, "nativeRunPackage", CHRONOS_ENGINE_CLASS_NAME);
+                    CHRONOS_PACKAGE_CLASS_NAME = resolveNativeClass(bridge, "nativeCreateFromFile", CHRONOS_PACKAGE_CLASS_NAME);
+                    resolvedFields.add("CHRONOS_ENGINE_CLASS_NAME");
+                    resolvedFields.add("CHRONOS_PACKAGE_CLASS_NAME");
+                    List<MethodData> factories = bridge.findMethod(FindMethod.create()
+                            .searchInClass(Collections.singleton(bridge.getClassData(CHRONOS_PACKAGE_CLASS_NAME)))
+                            .matcher(MethodMatcher.create().paramTypes("android.content.Context", "java.io.File")
+                                    .returnType(CHRONOS_PACKAGE_CLASS_NAME)));
+                    CHRONOS_CREATE_PACKAGE_METHOD_NAME = requireUnique("Chronos.packageFactory", factories).getMethodName();
+                    resolvedFields.add("CHRONOS_CREATE_PACKAGE_METHOD_NAME");
+                    Log.d(TAG, "[ChronosResolve] engine=" + CHRONOS_ENGINE_CLASS_NAME
+                            + ", package=" + CHRONOS_PACKAGE_CLASS_NAME + "#" + CHRONOS_CREATE_PACKAGE_METHOD_NAME);
+                });
+                scan("ChronosRpc", () -> {
+                    List<MethodData> result = bridge.findMethod(FindMethod.create()
+                            .matcher(MethodMatcher.create().usingStrings("DmsegLoader")));
+                    if (result.isEmpty()) result = bridge.findMethod(FindMethod.create()
+                            .matcher(MethodMatcher.create().usingStrings("CommonDanmakuWorkFlows")));
+                    java.util.Set<String> classes = new java.util.LinkedHashSet<>();
+                    for (MethodData method : result) classes.add(method.getClassName());
+                    CHRONOS_RPC_CLASS_NAME = classes.size() == 1 ? classes.iterator().next() : "";
+                    if (!CHRONOS_RPC_CLASS_NAME.isEmpty()) resolvedFields.add("CHRONOS_RPC_CLASS_NAME");
+                    Log.d(TAG, "[ChronosResolve] legacy RPC candidates=" + classes
+                            + "; enhanced-runner registration is installed independently");
                 });
 
                 scan("Description", () -> {
@@ -187,44 +253,30 @@ public class DexKitHelper {
                 });
 
                 scan("InternationalChronosRpc", () -> {
-                    List<ClassData> internationalChronosRPCClassDataList = bridge.findClass(FindClass.create()
-                            .matcher(ClassMatcher.create().usingStrings(
-                                    "EnhancedChronosPackageRunner",
-                                    "DestroyInputSurface: chronos engine is invalid!"
-                            ))
-                    );
-                    logMatches("InternationalChronosRpc.internationalChronosRPCClassDataList", internationalChronosRPCClassDataList);
-
-                    if (internationalChronosRPCClassDataList.isEmpty()) {
-                        Log.d(TAG, "DexKit fail to find internationalChronosRPCClass");
-                    } else {
-                        ClassData internationalChronosRPCClassData = getOuterClass(bridge, internationalChronosRPCClassDataList.get(0));
-
-                        if (internationalChronosRPCClassData != null) {
-                            INTERNATIONAL_CHRONOS_RPC_CLASS_NAME = internationalChronosRPCClassData.getName();
-                            resolvedFields.add("INTERNATIONAL_CHRONOS_RPC_CLASS_NAME");
-
-                            List<MethodData> internationalInvokeMethodDataList = bridge.findMethod(FindMethod.create()
-                                    .searchInClass(Collections.singleton(internationalChronosRPCClassData))
-                                    .matcher(MethodMatcher.create()
-                                            .paramCount(2)
-                                            .returnType("void")
-                                            .paramTypes("java.lang.Class", "kotlin.jvm.functions.Function6")
-                                    )
-                            );
-                            logMatches("InternationalChronosRpc.internationalInvokeMethodDataList", internationalInvokeMethodDataList);
-                            if (internationalInvokeMethodDataList.isEmpty()) {
-                                Log.d(TAG, "DexKit fail to find internationalInvokeMethod");
-                            } else {
-                                INTERNATIONAL_INVOKE_METHOD_NAME = internationalInvokeMethodDataList.get(0).getName();
-                                resolvedFields.add("INTERNATIONAL_INVOKE_METHOD_NAME");
-                            }
-                        } else {
-                            Log.d(TAG, "Warning: internationalChronosRPCClassData 的外部类未找到 (可能已不再是内部类)");
+                    List<ClassData> matches = bridge.findClass(FindClass.create()
+                            .matcher(ClassMatcher.create().usingStrings("EnhancedChronosPackageRunner",
+                                    "DestroyInputSurface: chronos engine is invalid!")));
+                    logMatches("Chronos.runner", matches);
+                    java.util.Map<String, MethodData> registrations = new java.util.LinkedHashMap<>();
+                    for (ClassData candidate : matches) {
+                        ClassData outer = getOuterClass(bridge, candidate);
+                        java.util.List<ClassData> scopes = new java.util.ArrayList<>();
+                        scopes.add(candidate);
+                        if (outer != null) scopes.add(outer);
+                        for (MethodData method : bridge.findMethod(FindMethod.create().searchInClass(scopes)
+                                .matcher(MethodMatcher.create().returnType("void")
+                                        .paramTypes("java.lang.Class", "kotlin.jvm.functions.Function6")))) {
+                            registrations.put(method.getClassName() + "#" + method.getMethodName(), method);
                         }
-
-
                     }
+                    MethodData registration = requireUnique("Chronos.runnerRegistration",
+                            new java.util.ArrayList<>(registrations.values()));
+                    INTERNATIONAL_CHRONOS_RPC_CLASS_NAME = registration.getClassName();
+                    INTERNATIONAL_INVOKE_METHOD_NAME = registration.getMethodName();
+                    resolvedFields.add("INTERNATIONAL_CHRONOS_RPC_CLASS_NAME");
+                    resolvedFields.add("INTERNATIONAL_INVOKE_METHOD_NAME");
+                    Log.d(TAG, "[ChronosResolve] registration=" + INTERNATIONAL_CHRONOS_RPC_CLASS_NAME
+                            + "#" + INTERNATIONAL_INVOKE_METHOD_NAME);
                 });
 
                 scan("PegasusModel", () -> {
@@ -352,24 +404,7 @@ public class DexKitHelper {
                     }
                 });
 
-                scan("SearchAdapter", () -> {
-                    List<ClassData> searchResultAdapterClassDataList = bridge.findClass(FindClass.create()
-                            .searchPackages("com.bilibili.search2.result.all")
-                            .matcher(
-                                    ClassMatcher.create()
-                                            .superClass("androidx.recyclerview.widget.RecyclerView$Adapter")
-                                            .addMethod(
-                                                    MethodMatcher.create().name("getItemCount")
-                                            )
-                                            .addMethod(MethodMatcher.create().name("getItemViewType"))
-                                            .addMethod(MethodMatcher.create().name("onCreateViewHolder"))
-                                            .addMethod(MethodMatcher.create().name("onBindViewHolder"))
-                            )
-                    );
-                    logMatches("SearchAdapter.searchResultAdapterClassDataList", searchResultAdapterClassDataList);
-                    SEARCH_RESULT_ADAPTER_CLASS_NAME = requireUnique("SearchAdapter.searchResultAdapterClassDataList", searchResultAdapterClassDataList).getName();
-                    resolvedFields.add("SEARCH_RESULT_ADAPTER_CLASS_NAME");
-                });
+
 
                 scan("HomeCard", () -> {
                     List<ClassData> homeCardAdapterClassDataList = bridge.findClass(FindClass.create()
@@ -438,6 +473,24 @@ public class DexKitHelper {
 
 
 
+                scan("VipTraceTargets", () -> {
+                    StringBuilder targets = new StringBuilder();
+                    collectTraceTargets(bridge, targets, "com.bilibili.tensorflow.model.mem.VipOpenMembershipPredictTFClient", "VIP_METHOD", true);
+                    collectTraceTargets(bridge, targets, "com.bilibili.tensorflow.model.mem.OgvOpenMembershipPredictTFClient", "OGV_METHOD", true);
+                    collectModelTraceTargets(bridge, targets);
+                    collectTraceTargets(bridge, targets, "com.bilibili.tensorflow.data.mem.TfOpenMemberReportEventLoader", "EVENT_METHOD", true);
+                    collectTraceTargets(bridge, targets, "com.bilibili.tensorflow.jsb.TfLiteModelService", "JSB_METHOD", false);
+                    java.util.Set<String> configSites = new java.util.LinkedHashSet<>();
+                    for (MethodData method : bridge.findMethod(FindMethod.create().matcher(MethodMatcher.create()
+                            .usingStrings("tf_ogv_report_open_membership_switch")))) {
+                        configSites.add(method.getClassName() + "#" + method.getMethodName() + "#CONFIG_SITE\n");
+                    }
+                    for (String site : configSites) targets.append(site);
+                    VIP_TRACE_TARGETS = targets.toString();
+                    if (!VIP_TRACE_TARGETS.isEmpty()) resolvedFields.add("VIP_TRACE_TARGETS");
+                    Log.d(TAG, "[VipResolve] targets=" + VIP_TRACE_TARGETS.replace('\n', ';'));
+                });
+
                 scan("NativeWebView", () -> {
                     List<ClassData> nativeWebViewSubClassDataList = bridge.findClass(FindClass.create()
                             .searchPackages("com.bilibili.app.comm")
@@ -493,24 +546,35 @@ public class DexKitHelper {
                 });
 
                 scan("SpaceInterceptor", () -> {
-                    List<ClassData> requestInterceptorClassDataList =
-                            bridge.findClass(FindClass.create()
-                                    .searchPackages("com.bilibili.app.comm.list.common.api")
-                                    .matcher(ClassMatcher.create()
-                                            .superClass(
-                                                    "com.bilibili.okretro.interceptor.DefaultRequestInterceptor"
-                                            )
-                                            .fieldCount(1)
-                                    )
-                            );
-                    logMatches("SpaceInterceptor.requestInterceptorClassDataList", requestInterceptorClassDataList);
-
-                    if (requestInterceptorClassDataList.isEmpty())
-                        Log.d(TAG, "requestInterceptorClassDataList is empty");
-                    else {
-                        REQUEST_INTERCEPTOR = requireUnique("SpaceInterceptor.requestInterceptorClassDataList", requestInterceptorClassDataList).getName();
-                        resolvedFields.add("REQUEST_INTERCEPTOR");
+                    REQUEST_INTERCEPTOR = "";
+                    Class<?> api = Class.forName("com.bilibili.app.authorspace.local.utils.SpaceApi",
+                            false, lpparam.classLoader);
+                    java.util.Set<Class<?>> targets = new java.util.LinkedHashSet<>();
+                    for (Method method : api.getDeclaredMethods()) {
+                        // Bind to the endpoint annotation, not a potentially renamed method.
+                        boolean spaceEndpoint = false;
+                        for (java.lang.annotation.Annotation annotation : method.getDeclaredAnnotations()) {
+                            if (annotation.annotationType().getName().equals("retrofit2.http.GET")) {
+                                String endpoint = String.valueOf(annotation.annotationType()
+                                        .getMethod("value").invoke(annotation));
+                                spaceEndpoint = endpoint.equals("https://app.bilibili.com/x/v2/space")
+                                        || endpoint.equals("/x/v2/space");
+                            }
+                        }
+                        if (!spaceEndpoint) continue;
+                        for (java.lang.annotation.Annotation annotation : method.getDeclaredAnnotations()) {
+                            if (annotation.annotationType().getName().equals("com.bilibili.okretro.anno.RequestInterceptor")) {
+                                Object target = annotation.annotationType().getMethod("value").invoke(annotation);
+                                if (target instanceof Class<?>) targets.add((Class<?>) target);
+                            }
+                        }
                     }
+                    if (targets.size() != 1) throw new IllegalStateException("SpaceApi interceptor count=" + targets.size());
+                    Class<?> type = targets.iterator().next();
+                    type.getDeclaredConstructor();
+                    REQUEST_INTERCEPTOR = type.getName();
+                    resolvedFields.add("REQUEST_INTERCEPTOR");
+                    Log.d(TAG, "[SpaceResolve] interceptor=" + REQUEST_INTERCEPTOR + " (from SpaceApi annotation)");
                 });
 
                 scan("PausedPage", () -> {
@@ -543,6 +607,15 @@ public class DexKitHelper {
                 cacheProps.setProperty("cache_schema", CACHE_SCHEMA);
                 cacheProps.setProperty("apk_last_modified", String.valueOf(currentApkTime));
                 cacheProps.setProperty("module_last_modified", String.valueOf(currentModuleTime));
+                if (resolvedFields.contains("PROGRESS_VIEW_CLASS_NAME")) cacheProps.setProperty("PROGRESS_VIEW_CLASS_NAME", PROGRESS_VIEW_CLASS_NAME);
+                if (resolvedFields.contains("PROGRESS_POINT_CLASS_NAME")) cacheProps.setProperty("PROGRESS_POINT_CLASS_NAME", PROGRESS_POINT_CLASS_NAME);
+                if (resolvedFields.contains("PROGRESS_UI_STATE_CLASS_NAME")) cacheProps.setProperty("PROGRESS_UI_STATE_CLASS_NAME", PROGRESS_UI_STATE_CLASS_NAME);
+                if (resolvedFields.contains("PROGRESS_MARKER_UI_CLASS_NAME")) cacheProps.setProperty("PROGRESS_MARKER_UI_CLASS_NAME", PROGRESS_MARKER_UI_CLASS_NAME);
+                if (resolvedFields.contains("PROGRESS_DRAW_CLASS_NAME")) cacheProps.setProperty("PROGRESS_DRAW_CLASS_NAME", PROGRESS_DRAW_CLASS_NAME);
+                if (resolvedFields.contains("CHRONOS_ENGINE_CLASS_NAME")) cacheProps.setProperty("CHRONOS_ENGINE_CLASS_NAME", CHRONOS_ENGINE_CLASS_NAME);
+                if (resolvedFields.contains("CHRONOS_PACKAGE_CLASS_NAME")) cacheProps.setProperty("CHRONOS_PACKAGE_CLASS_NAME", CHRONOS_PACKAGE_CLASS_NAME);
+                if (resolvedFields.contains("CHRONOS_CREATE_PACKAGE_METHOD_NAME")) cacheProps.setProperty("CHRONOS_CREATE_PACKAGE_METHOD_NAME", CHRONOS_CREATE_PACKAGE_METHOD_NAME);
+                if (resolvedFields.contains("VIP_TRACE_TARGETS")) cacheProps.setProperty("VIP_TRACE_TARGETS", VIP_TRACE_TARGETS);
                 if (resolvedFields.contains("CHRONOS_RPC_CLASS_NAME")) cacheProps.setProperty("CHRONOS_RPC_CLASS_NAME", CHRONOS_RPC_CLASS_NAME);
                 if (resolvedFields.contains("DESCRIPTION_TEXTVIEW_CLASS_NAME")) cacheProps.setProperty("DESCRIPTION_TEXTVIEW_CLASS_NAME", DESCRIPTION_TEXTVIEW_CLASS_NAME);
                 if (resolvedFields.contains("INTERNATIONAL_CHRONOS_RPC_CLASS_NAME")) cacheProps.setProperty("INTERNATIONAL_CHRONOS_RPC_CLASS_NAME", INTERNATIONAL_CHRONOS_RPC_CLASS_NAME);
@@ -557,7 +630,6 @@ public class DexKitHelper {
                 if (resolvedFields.contains("VIDEO_MENTIONED_COMPONENT_CLASS_NAME")) cacheProps.setProperty("VIDEO_MENTIONED_COMPONENT_CLASS_NAME", VIDEO_MENTIONED_COMPONENT_CLASS_NAME);
                 if (resolvedFields.contains("UI_COMPONENT_B_CLASS_NAME")) cacheProps.setProperty("UI_COMPONENT_B_CLASS_NAME", UI_COMPONENT_B_CLASS_NAME);
                 if (resolvedFields.contains("VIEW_ENTRY_CLASS_NAME")) cacheProps.setProperty("VIEW_ENTRY_CLASS_NAME", VIEW_ENTRY_CLASS_NAME);
-                if (resolvedFields.contains("SEARCH_RESULT_ADAPTER_CLASS_NAME")) cacheProps.setProperty("SEARCH_RESULT_ADAPTER_CLASS_NAME", SEARCH_RESULT_ADAPTER_CLASS_NAME);
                 if (resolvedFields.contains("HOME_CARD_ADAPTER_CLASS_NAME")) cacheProps.setProperty("HOME_CARD_ADAPTER_CLASS_NAME", HOME_CARD_ADAPTER_CLASS_NAME);
                 if (resolvedFields.contains("CARD_INFO_SETTING_METHOD_NAME")) cacheProps.setProperty("CARD_INFO_SETTING_METHOD_NAME", CARD_INFO_SETTING_METHOD_NAME);
 
@@ -580,6 +652,85 @@ public class DexKitHelper {
                 Log.d(TAG, "Exception during DexKit scan:\n" + Log.getStackTraceString(e));
             }
         }
+    }
+
+    private static String resolveNativeClass(DexKitBridge bridge, String nativeName, String fallback) {
+        List<ClassData> candidates = bridge.findClass(FindClass.create()
+                .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name(nativeName))));
+        logMatches("Chronos." + nativeName, candidates);
+        if (candidates.size() == 1) return candidates.get(0).getName();
+        if (candidates.isEmpty() && bridge.getClassData(fallback) != null) return fallback;
+        throw new IllegalStateException(nativeName + ": ambiguous or missing class, count=" + candidates.size());
+    }
+
+    /**
+     * Resolve the model-file preparation singleton by structure, never by an obfuscated letter.
+     * Verified against 9.19.0: two File fields, String state, Mutex and two suspend methods.
+     * Keep the other trace targets available when this optional model target cannot be resolved.
+     */
+    private static void collectModelTraceTargets(DexKitBridge bridge, StringBuilder output) {
+        try {
+            List<ClassData> candidates = bridge.findClass(FindClass.create()
+                    .searchPackages("com.bilibili.tensorflow.model.mem")
+                    .matcher(ClassMatcher.create()
+                            .addField(FieldMatcher.create().type("java.io.File"))
+                            .addField(FieldMatcher.create().type("java.lang.String"))
+                            .addField(FieldMatcher.create().type("kotlinx.coroutines.sync.Mutex"))
+                            .addMethod(MethodMatcher.create()
+                                    .paramTypes("kotlin.coroutines.jvm.internal.ContinuationImpl")
+                                    .returnType("java.lang.Object"))));
+            logMatches("VipModel.structure", candidates);
+            java.util.List<ClassData> verified = new java.util.ArrayList<>();
+            for (ClassData candidate : candidates) {
+                String name = candidate.getName();
+                List<FieldData> files = bridge.findField(FindField.create()
+                        .matcher(FieldMatcher.create().declaredClass(name).type("java.io.File")));
+                List<FieldData> singleton = bridge.findField(FindField.create()
+                        .matcher(FieldMatcher.create().declaredClass(name).type(name)));
+                List<MethodData> suspendMethods = bridge.findMethod(FindMethod.create()
+                        .searchInClass(Collections.singleton(candidate))
+                        .matcher(MethodMatcher.create()
+                                .paramTypes("kotlin.coroutines.jvm.internal.ContinuationImpl")
+                                .returnType("java.lang.Object")));
+                boolean accepted = files.size() >= 2 && !singleton.isEmpty()
+                        && suspendMethods.size() >= 2;
+                Log.d(TAG, "[VipResolve] model candidate=" + name + ", files=" + files.size()
+                        + ", singletonFields=" + singleton.size() + ", suspendMethods="
+                        + suspendMethods.size() + ", accepted=" + accepted);
+                if (accepted) verified.add(candidate);
+            }
+            ClassData model = requireUnique("VipModel.verified", verified);
+            collectTraceTargets(bridge, output, model.getName(), "MODEL_METHOD", false);
+            Log.d(TAG, "[VipResolve] MODEL_METHOD resolved=" + model.getName());
+        } catch (Exception | LinkageError error) {
+            Log.d(TAG, "[VipResolve] MODEL_METHOD unresolved; other targets continue\n"
+                    + Log.getStackTraceString(error));
+        }
+    }
+
+    private static void collectTraceTargets(DexKitBridge bridge, StringBuilder output,
+                                            String className, String stage, boolean stringFallback) {
+        ClassData type = bridge.getClassData(className);
+        if (type == null && stringFallback) {
+            String simpleName = className.substring(className.lastIndexOf('.') + 1);
+            List<ClassData> candidates = bridge.findClass(FindClass.create()
+                    .matcher(ClassMatcher.create().usingStrings(simpleName)));
+            if (candidates.size() == 1) type = candidates.get(0);
+        }
+        if (type == null) {
+            Log.d(TAG, "[VipResolve] missing " + className);
+            return;
+        }
+        List<MethodData> methods = bridge.findMethod(FindMethod.create()
+                .searchInClass(Collections.singleton(type)).matcher(MethodMatcher.create()));
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        for (MethodData method : methods) {
+            String name = method.getMethodName();
+            if (!name.startsWith("<") && !name.equals("equals") && !name.equals("hashCode")
+                    && !name.equals("toString")) names.add(name);
+        }
+        for (String name : names) output.append(type.getName()).append('#').append(name)
+                .append('#').append(stage).append('\n');
     }
 
     @FunctionalInterface
