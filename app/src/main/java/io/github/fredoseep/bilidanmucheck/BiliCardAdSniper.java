@@ -2,66 +2,62 @@ package io.github.fredoseep.bilidanmucheck;
 
 import android.util.Log;
 
+import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
 import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 public class BiliCardAdSniper {
     private static final String TAG = "SearchAndCardAdSniper";
+    private static final List<String> exceptionMethodName = List.of("getClass","notifyAll","wait","isMutable");
 
     public static void hook(ClassLoader classLoader, DexKitHelper helper) {
-        try {
+
+        try{
             XposedHelpers.findAndHookMethod(
-                    helper.SEARCH_RESULT_ADAPTER_CLASS_NAME,
+                    "com.bapis.bilibili.polymer.app.search.v1.SearchAllResponse",
                     classLoader,
-                    "getItemCount",
+                    "getItemList",
                     new XC_MethodHook() {
                         @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            Object adapter = param.thisObject;
-                            Class<?> clazz = adapter.getClass();
+                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            List<?> original = (List<?>) param.getResult();
+                            if (original == null) return;
 
-                            while (clazz != null && clazz != Object.class) {
-                                for (java.lang.reflect.Field field : clazz.getDeclaredFields()) {
-                                    if (java.util.List.class.isAssignableFrom(field.getType())) {
-                                        field.setAccessible(true);
-                                        java.util.List<?> list = (java.util.List<?>) field.get(adapter);
+                            List<Object> filtered = new ArrayList<>(original.size());
+                            int removed = 0;
 
-                                        if (list != null && !list.isEmpty()) {
-                                            for (int i = list.size() - 1; i >= 0; i--) {
-                                                Object item = list.get(i);
-                                                if (item == null) continue;
+                            for (Object item : original) {
+                                String gotoString =
+                                        (String) XposedHelpers.getObjectField(item, "goto_");
 
-                                                try {
-                                                    String goTo = (String) XposedHelpers.callMethod(item, "getGoTo");
-                                                    String title = (String) XposedHelpers.getObjectField(item, "title");
-
-                                                    if (goTo != null && goTo.contains("ad")) {
-                                                        list.remove(i);
-                                                        Log.i(TAG, "[SearchAd] 斩杀常规搜索广告 | goTo: " + goTo + " | 标题: " + title);
-                                                        continue;
-                                                    }
-                                                    if (title != null && (title.contains("下载夸克") || title.contains("广告") || title.contains("拼多多"))) {
-                                                        list.remove(i);
-                                                        Log.i(TAG, "[SearchAd] 斩杀隐蔽搜索广告 | 命中关键字: " + title);
-                                                    }
-                                                } catch (Throwable ignored) {
-                                                }
-                                            }
-                                        }
-                                    }
+                                if (gotoString != null
+                                        && (gotoString.contains("video_ad")
+                                        || gotoString.contains("picture_ad"))) {
+                                    removed++;
+                                } else {
+                                    filtered.add(item);
                                 }
-                                clazz = clazz.getSuperclass();
+                            }
+
+                            if (removed > 0) {
+                                param.setResult(filtered);
+                                Log.d(TAG, "过滤广告 " + removed
+                                        + " 条，剩余 " + filtered.size() + " 条");
                             }
                         }
                     }
             );
-            Log.d(TAG, "[SearchAd] 搜索流 Hook 注册成功");
-        } catch (Throwable e) {
-            Log.e(TAG, "[SearchAd] 搜索流 Hook 失败: " + e.getMessage());
+
+        } catch (Exception e) {
+            Log.e(TAG,"Error1: "+e.getMessage());
         }
+
+
 
         try {
             XposedHelpers.findAndHookMethod(
