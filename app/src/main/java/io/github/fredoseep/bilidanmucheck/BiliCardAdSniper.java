@@ -13,7 +13,6 @@ import de.robv.android.xposed.XposedHelpers;
 
 public class BiliCardAdSniper {
     private static final String TAG = "SearchAndCardAdSniper";
-    private static final List<String> exceptionMethodName = List.of("getClass","notifyAll","wait","isMutable");
 
     public static void hook(ClassLoader classLoader, DexKitHelper helper) {
 
